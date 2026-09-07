@@ -30,7 +30,10 @@ demo adapter. Read and write kernels are never resident together.
 
 ## Run (end user)
 
-Unzip the Windows build and double-click `sCANtool.exe`.
+The Windows exe is **not** in this git tree. Download the zip from
+[Releases](https://github.com/enslaved87/sCANtool-public/releases)
+(`sCANtool-windows.zip`), unzip it, and double-click `sCANtool.exe`.
+`LICENSE` is in that folder.
 
 Kvaser / Peak / SLCAN adapters need their vendor driver installed on
 the PC. The exe bundles Python and the app libraries; it does not
@@ -108,7 +111,8 @@ kernel *source*, and the shipped `kernel.bin` / `write_kernel.bin`.
 Do not commit `tests/`, `dist/`, `build/`, `release/`, `outputs/`, or
 compiler `.o` / `.elf` / `.map` files.
 
-Attach `release/sCANtool-windows.zip` as a GitHub Release asset.
+End users download `sCANtool-windows.zip` from GitHub Releases, not
+from a clone. Attach that zip as a Release asset; do not commit it.
 
 ## License
 

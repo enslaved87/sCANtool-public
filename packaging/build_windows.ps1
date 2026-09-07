@@ -12,4 +12,8 @@ if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
 
 $exe = Join-Path $Root "dist\sCANtool\sCANtool.exe"
 if (-not (Test-Path $exe)) { throw "missing $exe" }
+$license = Join-Path $Root "LICENSE"
+if (Test-Path $license) {
+    Copy-Item $license (Join-Path $Root "dist\sCANtool\LICENSE") -Force
+}
 Write-Host "built $exe"
