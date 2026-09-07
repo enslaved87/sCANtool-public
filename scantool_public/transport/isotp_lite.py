@@ -38,7 +38,7 @@ def isotp_request(
         if msg.arbitration_id != rxid:
             continue
         data = bytes(msg.data)
-        if not data:
+        if len(data) < 2:
             continue
         pci = data[0]
         kind = pci >> 4

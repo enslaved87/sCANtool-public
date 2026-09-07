@@ -113,7 +113,7 @@ def parse_elm_payload(blob: str) -> bytes:
     expected = 0
     assembled = bytearray()
     for _arb, data in frames:
-        if not data:
+        if len(data) < 2:
             continue
         kind = data[0] >> 4
         if kind == 1:
