@@ -112,5 +112,12 @@ Attach `release/sCANtool-windows.zip` as a GitHub Release asset.
 
 ## License
 
-Add a `LICENSE` before you publish if you want to grant rights.
-Until then this tree is the original sCANtool Public source.
+sCANtool Public is free software under the **GNU General Public License
+v3.0 or later**. See `LICENSE`.
+
+You may run, share, and modify it. If you distribute this program or a
+modified version (including a closed product that includes it), you must
+also provide the corresponding source under the same license.
+
+There is **no warranty**. Flash write can brick a module. You assume
+that risk. The Windows zip's corresponding source is this repository.

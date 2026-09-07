@@ -9,6 +9,7 @@ ROOT = Path(SPECPATH).resolve().parent
 PKG = ROOT / "scantool_public"
 
 datas = [
+    (str(ROOT / "LICENSE"), "."),
     (str(PKG / "data"), "scantool_public/data"),
     (str(PKG / "vendor" / "e92" / "kernel.bin"), "scantool_public/vendor/e92"),
     (str(PKG / "vendor" / "e92" / "write_kernel.bin"), "scantool_public/vendor/e92"),
