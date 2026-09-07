@@ -1,0 +1,32 @@
+{
+  "presets": {
+    "engine": ["04", "05", "0B", "0C", "0D", "0E", "0F", "10", "11", "42"],
+    "fuel": ["04", "06", "07", "0C", "0D", "10", "2F", "44", "45"],
+    "emissions": ["04", "05", "06", "07", "0C", "11", "1C", "21", "31"],
+    "full": ["04", "05", "06", "07", "0B", "0C", "0D", "0E", "0F", "10", "11", "1F", "21", "2F", "42", "46", "5C"]
+  },
+  "pids": {
+    "04": {"name": "Calculated load", "units": "%", "bytes": 1, "scale": 100, "div": 255},
+    "05": {"name": "Coolant temp", "units": "°C", "bytes": 1, "offset": -40},
+    "06": {"name": "STFT B1", "units": "%", "bytes": 1, "scale": 100, "div": 128, "offset": -100},
+    "07": {"name": "LTFT B1", "units": "%", "bytes": 1, "scale": 100, "div": 128, "offset": -100},
+    "0B": {"name": "MAP", "units": "kPa", "bytes": 1},
+    "0C": {"name": "Engine RPM", "units": "rpm", "bytes": 2, "div": 4},
+    "0D": {"name": "Vehicle speed", "units": "km/h", "bytes": 1},
+    "0E": {"name": "Timing advance", "units": "°", "bytes": 1, "div": 2, "offset": -64},
+    "0F": {"name": "Intake air temp", "units": "°C", "bytes": 1, "offset": -40},
+    "10": {"name": "MAF", "units": "g/s", "bytes": 2, "div": 100},
+    "11": {"name": "Throttle", "units": "%", "bytes": 1, "scale": 100, "div": 255},
+    "1C": {"name": "OBD standard", "units": "", "bytes": 1},
+    "1F": {"name": "Run time", "units": "s", "bytes": 2},
+    "21": {"name": "Distance with MIL", "units": "km", "bytes": 2},
+    "30": {"name": "Warm-ups since clear", "units": "", "bytes": 1},
+    "2F": {"name": "Fuel level", "units": "%", "bytes": 1, "scale": 100, "div": 255},
+    "31": {"name": "Distance since clear", "units": "km", "bytes": 2},
+    "42": {"name": "Control module V", "units": "V", "bytes": 2, "div": 1000},
+    "44": {"name": "Commanded EQ", "units": "", "bytes": 2, "div": 32768},
+    "45": {"name": "Relative throttle", "units": "%", "bytes": 1, "scale": 100, "div": 255},
+    "46": {"name": "Ambient air", "units": "°C", "bytes": 1, "offset": -40},
+    "5C": {"name": "Oil temp", "units": "°C", "bytes": 1, "offset": -40}
+  }
+}
