@@ -646,15 +646,18 @@ class Session(QObject):
             payload["ok"] = True
             payload["dests_done"] = done
         except WriteBlocked as exc:
+            extra = ""
             if committed and bus is not None and not in_dest:
                 from scantool_public.features.e92_write import (
                     WRITE_KERNEL,
+                    _rollback_note,
                     add_vendor_to_path,
                     rollback_committed_dests,
                     reset_to_stock_best_effort,
                 )
 
                 log("write stopped — restoring dests already programmed")
+                extra = ""
                 try:
                     add_vendor_to_path()
                     from ecu_bin_extractor import E92BinExtractor, E92Variant  # type: ignore
@@ -666,11 +669,18 @@ class Session(QObject):
                         variant=E92Variant.EARLY,
                         kernel_path=WRITE_KERNEL,
                     )
-                    rollback_committed_dests(bus, committed, ext, log)
+                    n_ok, n_skip = rollback_committed_dests(bus, committed, ext, log)
+                    extra = _rollback_note(n_ok, n_skip, True)
                 except Exception as rec:
                     log(f"rollback aborted: {rec}")
+                    extra = _rollback_note(0, len(committed), True)
                 reset_to_stock_best_effort(bus, log)
-            payload = {"ok": False, "error": str(exc), "dests_done": done, "path": str(path)}
+            payload = {
+                "ok": False,
+                "error": str(exc) + extra,
+                "dests_done": done,
+                "path": str(path),
+            }
         finally:
             if bus is not None:
                 try:

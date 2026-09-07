@@ -512,29 +512,48 @@ def _erase_timeout(dest: Dest) -> float:
     return 60.0
 
 
-def rollback_committed_dests(bus, items: list, ext, log: LogFn) -> None:
-    """Erase+program preread for dests already dump-matched in this job."""
+def rollback_committed_dests(bus, items: list, ext, log: LogFn) -> tuple[int, int]:
+    """Erase+program preread for dests already dump-matched in this job.
+
+    Returns (restored, skipped). Skipped means mixed flash may remain —
+    re-run the same Write entire/calibration job after B+ cycle to heal.
+    """
     if not items:
-        return
+        return 0, 0
     log(
         f"rolling back {len(items)} dest(s) already programmed — "
         "a mixed OS/HAS image can be a no-start"
     )
+    restored = 0
     for dest, blob in reversed(list(items)):
         if not isinstance(dest, Dest):
             dest = dest_by_addr(dest)
         if not blob or len(blob) != dest.size:
             log(f"rollback skip {dest.name}: no preread")
-            continue
+            return restored, len(items) - restored
         try:
             if ext is None or not ext.is_kernel_alive(0.5):
                 log(f"rollback {dest.name} skipped. {HUNG_KERNEL_MSG}")
-                return
+                return restored, len(items) - restored
             log(f"rollback {dest.name} from preread")
             restore_preread(bus, dest, blob, "erase_then_program", ext, log)
+            restored += 1
         except Exception as exc:
             log(f"rollback {dest.name} failed: {exc}")
-            return
+            return restored, len(items) - restored
+    return restored, 0
+
+
+def _rollback_note(restored: int, skipped: int, had_committed: bool) -> str:
+    if not had_committed:
+        return ""
+    if skipped:
+        return (
+            f" Rolled back {restored} dest(s); {skipped} still on the new image. "
+            "Mixed cal/OS/HAS can be a no-start. Power-cycle B+ 8–10 s, then run "
+            "Write entire (or Write calibration) again with the same image to repair."
+        )
+    return f" Rolled back {restored} dest(s) already written."
 
 
 def reset_to_stock_best_effort(bus, log: LogFn) -> None:
@@ -853,16 +872,20 @@ def execute_write(
         elif WRITES_DIR:
             note = str(WRITES_DIR)
         return WriteOutcome(ok=True, dests_done=done, path=note, preread=preread)
-    except WriteBlocked:
+    except WriteBlocked as exc:
         restore_after_fault()
-        rollback_committed_dests(bus, list(rollback or ()), ext, _log)
+        n_ok, n_skip = rollback_committed_dests(bus, list(rollback or ()), ext, _log)
         _try_reset_to_stock(ext, bus, _log)
+        extra = _rollback_note(n_ok, n_skip, bool(rollback))
+        if extra:
+            raise WriteBlocked(f"{exc}{extra}") from exc
         raise
     except Exception as exc:
         restore_after_fault()
-        rollback_committed_dests(bus, list(rollback or ()), ext, _log)
+        n_ok, n_skip = rollback_committed_dests(bus, list(rollback or ()), ext, _log)
         _try_reset_to_stock(ext, bus, _log)
-        raise WriteBlocked(f"{type(exc).__name__}: {exc}") from exc
+        extra = _rollback_note(n_ok, n_skip, bool(rollback))
+        raise WriteBlocked(f"{type(exc).__name__}: {exc}{extra}") from exc
     finally:
         if own_bus and bus is not None:
             try:

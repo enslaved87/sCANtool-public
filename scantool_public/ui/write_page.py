@@ -265,9 +265,12 @@ class WritePage(QWidget):
                 "stay as they are on the ECU.\n\n"
                 f"Expect about {lo}–{hi} minutes (HAS tiles dominate). Solid B+. "
                 "Do not key-off.\n\n"
-                "Each dest is committed after it dump-matches. A later failure "
-                "tries to restore dests already written; if that restore fails, "
-                "the module can be left with mixed new/old dests (no-start risk)."
+                "Write entire is NOT atomic. Each dest is committed after "
+                "dump-match. If the helper is still alive, a later failure "
+                "rolls already-written dests back to the pre-write image. "
+                "If the helper is silent (bus drop), rollback cannot run — "
+                "power-cycle B+ 8–10 s and run Write entire again with the "
+                "same image to repair mixed cal/OS/HAS."
             )
         else:
             addr = int(self.dest.currentData())

@@ -19,9 +19,12 @@ Vehicle scan, identity, datalog, E92 full-read, and EARLY E92 flash write.
   `0x40000` / `0x60000` + MAS) or **Write entire** (cal + OS + HAS).
   Advanced mode writes one dest. Dests in one job share the write helper
   and reset to stock when the last dest finishes. Boot, VIN, and
-  `0x1F000` are not written. A dest is committed after dump-match; a
-  later failure tries to restore dests already written. The image VIN
-  (at `0x100B4`) and live CAL are checked before dest 1.
+  `0x1F000` are not written. Write entire is not atomic. If a later dest
+  fails and the helper is still alive, already-written dests are rolled
+  back to the pre-write image. If the helper is silent, rollback cannot
+  run — B+ off 8–10 s, then run **Write entire** again with the same
+  image to heal mixed cal/OS/HAS. Image VIN (`0x100B4`) and live CAL
+  are checked before dest 1.
   LATE modules are refused. This reader's `…F800` holes (`0xFF` fill)
   are replaced from live flash on write so a self-read can go back.
 
@@ -115,6 +118,16 @@ compiler `.o` / `.elf` / `.map` files.
 
 End users download `sCANtool-windows.zip` from GitHub Releases, not
 from a clone. Attach that zip as a Release asset; do not commit it.
+
+## Notes (v1.0.1)
+
+- Write entire / calibration is dest-by-dest. A mid-job dropout used to
+  leave new cal/OS on old HAS with no warning. The tool now rolls back
+  dests that already dump-matched when the helper is still alive, and
+  tells you to re-run the same job after a B+ cycle if it is not.
+- Wrong 4 MiB file: image VIN and live CAL are compared before dest 1.
+- Startup failures show a dialog (windowed exe has no console).
+- Short ISO-TP frames no longer crash scan/identity.
 
 ## License
 
