@@ -19,7 +19,9 @@ Vehicle scan, identity, datalog, E92 full-read, and EARLY E92 flash write.
   `0x40000` / `0x60000` + MAS) or **Write entire** (cal + OS + HAS).
   Advanced mode writes one dest. Dests in one job share the write helper
   and reset to stock when the last dest finishes. Boot, VIN, and
-  `0x1F000` are not written.
+  `0x1F000` are not written. A dest is committed after dump-match; a
+  later failure tries to restore dests already written. The image VIN
+  (at `0x100B4`) and live CAL are checked before dest 1.
   LATE modules are refused. This reader's `…F800` holes (`0xFF` fill)
   are replaced from live flash on write so a self-read can go back.
 

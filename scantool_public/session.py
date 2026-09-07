@@ -124,12 +124,14 @@ class Session(QObject):
     def attempt_write(self) -> None:
         self._q.put(("write", None))
 
-    def start_write(self, path: Path, dest_addrs) -> None:
+    def start_write(self, path: Path, dest_addrs, allow_image_mismatch: bool = False) -> None:
         self._cancel_read.clear()
         self._reconnect_after_read = True
         if isinstance(dest_addrs, int):
             dest_addrs = (dest_addrs,)
-        self._q.put(("write", path, tuple(int(a) for a in dest_addrs)))
+        self._q.put(
+            ("write", path, tuple(int(a) for a in dest_addrs), bool(allow_image_mismatch))
+        )
 
     def cancel_write(self) -> None:
         self._cancel_read.set()
@@ -222,6 +224,7 @@ class Session(QObject):
                         self._do_write(
                             item[1] if len(item) > 1 else None,
                             item[2] if len(item) > 2 else None,
+                            allow_image_mismatch=bool(item[3]) if len(item) > 3 else False,
                         )
                 finally:
                     if busy:
@@ -561,7 +564,7 @@ class Session(QObject):
         else:
             self._emit_activity(out.error or "Shadow read failed", pct=0, active=False)
 
-    def _do_write(self, path, dest_addrs=None) -> None:
+    def _do_write(self, path, dest_addrs=None, allow_image_mismatch: bool = False) -> None:
         if path is None:
             request_write()
             return
@@ -599,6 +602,8 @@ class Session(QObject):
         payload: dict = {"ok": False, "error": "", "dests_done": 0, "path": str(path)}
         bus = None
         resident = False
+        committed: list = []
+        in_dest = False
         try:
             bus = open_raw_bus(spec, br)
             for i, addr in enumerate(dests):
@@ -616,6 +621,7 @@ class Session(QObject):
                     self._emit_activity(line, pct=overall, active=True)
 
                 self._emit_activity(f"Write {part}/{n}", active=True)
+                in_dest = True
                 out = request_write(
                     path=path,
                     dest=addr,
@@ -628,16 +634,41 @@ class Session(QObject):
                     bus=bus,
                     reuse_kernel=resident,
                     reset=last,
+                    allow_image_mismatch=allow_image_mismatch,
+                    rollback=committed,
                 )
+                in_dest = False
                 done += int(out.dests_done or 0)
                 resident = not last
+                if out.preread:
+                    committed.append((addr, out.preread))
                 payload["path"] = out.path or payload["path"]
             payload["ok"] = True
             payload["dests_done"] = done
         except WriteBlocked as exc:
-            if resident and bus is not None:
-                from scantool_public.features.e92_write import reset_to_stock_best_effort
+            if committed and bus is not None and not in_dest:
+                from scantool_public.features.e92_write import (
+                    WRITE_KERNEL,
+                    add_vendor_to_path,
+                    rollback_committed_dests,
+                    reset_to_stock_best_effort,
+                )
 
+                log("write stopped — restoring dests already programmed")
+                try:
+                    add_vendor_to_path()
+                    from ecu_bin_extractor import E92BinExtractor, E92Variant  # type: ignore
+
+                    ext = E92BinExtractor(
+                        bus,
+                        log=log,
+                        detail_log=log,
+                        variant=E92Variant.EARLY,
+                        kernel_path=WRITE_KERNEL,
+                    )
+                    rollback_committed_dests(bus, committed, ext, log)
+                except Exception as rec:
+                    log(f"rollback aborted: {rec}")
                 reset_to_stock_best_effort(bus, log)
             payload = {"ok": False, "error": str(exc), "dests_done": done, "path": str(path)}
         finally:

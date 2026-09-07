@@ -20,10 +20,12 @@ from scantool_public.features.e92_write import (
     FLASH_SIZE,
     calibration_dests,
     entire_dests,
+    estimate_write_minutes,
+    image_ecu_warnings,
     writable_dests,
     write_kernel_present,
 )
-from scantool_public.features.write_gate import write_status
+from scantool_public.features.write_gate import WriteBlocked, write_status
 from scantool_public.paths import WRITE_KERNEL
 from scantool_public.ui.widgets import (
     ActivityBar,
@@ -117,6 +119,10 @@ class WritePage(QWidget):
         self.btn_cal = compact_button("Write calibration", primary=True)
         self.btn_cal.clicked.connect(lambda: self._start("calibration"))
         self.btn_entire = compact_button("Write entire", primary=True)
+        self.btn_entire.setToolTip(
+            "Writes 0x40000 through the end of flash (cal, OS MID, HAS). "
+            "Boot, VIN, and 0x1F000 stay on the ECU."
+        )
         self.btn_entire.clicked.connect(lambda: self._start("entire"))
         self.btn_write = compact_button("Write dest", primary=True)
         self.btn_write.clicked.connect(lambda: self._start("dest"))
@@ -234,30 +240,44 @@ class WritePage(QWidget):
         if mode == "calibration":
             dests = calibration_dests()
             title = "Write calibration"
+            lo, hi = estimate_write_minutes(dests)
             detail = (
                 "Programs the calibration dests on one write helper:\n"
                 + "\n".join(f"  • {d.name}  {d.size // 1024} KiB" for d in dests)
-                + "\n\nStock OS returns after the last dest. "
-                "Boot / VIN / 0x1F000 are not written. Do not key-off."
+                + f"\n\nExpect about {lo}–{hi} minutes. Solid B+. Do not key-off. "
+                "A dest is committed after dump-match. If a later dest fails, "
+                "the tool tries to put already-written dests back. "
+                "Boot / VIN / 0x1F000 are not written."
             )
         elif mode == "entire":
-            dests = entire_dests()
+            try:
+                dests = entire_dests()
+            except WriteBlocked as exc:
+                QMessageBox.warning(self, "Write entire", str(exc))
+                return
             title = "Write entire"
+            lo, hi = estimate_write_minutes(dests)
             detail = (
-                "Programs calibration, OS, and HAS on one write helper:\n"
+                "Programs calibration, OS MID, and HAS (0x40000–end of flash) "
+                "on one write helper:\n"
                 + "\n".join(f"  • {d.name}  {d.size // 1024} KiB" for d in dests)
-                + "\n\nStock OS returns after the last dest. "
-                "HAS tiles take several minutes each. Do not key-off. "
-                "Boot / VIN / 0x1F000 stay untouched."
+                + "\n\nThis is NOT a full-chip write. Boot, VIN, and 0x1F000 "
+                "stay as they are on the ECU.\n\n"
+                f"Expect about {lo}–{hi} minutes (HAS tiles dominate). Solid B+. "
+                "Do not key-off.\n\n"
+                "Each dest is committed after it dump-matches. A later failure "
+                "tries to restore dests already written; if that restore fails, "
+                "the module can be left with mixed new/old dests (no-start risk)."
             )
         else:
             addr = int(self.dest.currentData())
             dests = tuple(d for d in writable_dests() if d.addr == addr)
             title = "Write dest"
             name = dests[0].name if dests else self.dest.currentText()
+            lo, hi = estimate_write_minutes(dests) if dests else (1, 3)
             detail = (
                 f"Program one dest ({name}) from:\n{self._path}\n\n"
-                "Do not key-off until this dest finishes."
+                f"Expect about {lo}–{hi} minutes. Do not key-off until this dest finishes."
             )
         if not dests:
             return
@@ -265,8 +285,30 @@ class WritePage(QWidget):
             QMessageBox.StandardButton.Yes
         ):
             return
+        allow_mismatch = False
+        try:
+            raw = self._path.read_bytes()
+        except OSError as exc:
+            QMessageBox.warning(self, title, f"Could not read image: {exc}")
+            return
+        ident = getattr(self._s, "_last_identity", {}) or {}
+        cals = ident.get("cal_ids") or []
+        live_osid = cals[0] if cals else (ident.get("cal_id") or ident.get("os_id") or "")
+        if " · " in str(live_osid):
+            live_osid = str(live_osid).split(" · ")[0].strip()
+        warns = image_ecu_warnings(raw, str(ident.get("vin") or ""), str(live_osid or ""))
+        if warns:
+            extra = (
+                "This image may not match the connected ECU:\n\n"
+                + "\n".join(f"  • {w}" for w in warns)
+                + "\n\nBoot is not rewritten. A mismatched OS on the old boot "
+                "can fail to start. Continue anyway?"
+            )
+            if QMessageBox.question(self, title, extra) != QMessageBox.StandardButton.Yes:
+                return
+            allow_mismatch = True
         self.activity.set_activity(f"Starting {title.lower()}…", active=True)
-        self._s.start_write(self._path, [d.addr for d in dests])
+        self._s.start_write(self._path, [d.addr for d in dests], allow_image_mismatch=allow_mismatch)
 
     def _fill(self, doc: dict) -> None:
         self.tree.clear()

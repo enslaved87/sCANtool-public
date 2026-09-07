@@ -77,6 +77,7 @@ class WriteOutcome:
     error: str = ""
     dests_done: int = 0
     path: str = ""
+    preread: bytes = b""
 
 
 def write_kernel_present() -> bool:
@@ -123,7 +124,54 @@ def calibration_dests() -> tuple[Dest, ...]:
 
 def entire_dests() -> tuple[Dest, ...]:
     """Cal + OS MID + HAS. Boot / VIN / 0x1F000 stay out."""
-    return writable_dests()
+    dests = writable_dests()
+    if not dest_covers_flash(dests):
+        raise WriteBlocked("Write entire dests do not tile 0x40000–4 MiB.")
+    return dests
+
+
+def image_vin(image: bytes) -> str:
+    if len(image) < VIN_ADDR + 17:
+        return ""
+    raw = bytes(image[VIN_ADDR : VIN_ADDR + 17])
+    if raw == b"\xff" * 17 or raw == b"\x00" * 17:
+        return ""
+    try:
+        text = raw.decode("ascii")
+    except UnicodeDecodeError:
+        return ""
+    vin = "".join(c for c in text if c.isalnum())
+    return vin.upper() if len(vin) == 17 else ""
+
+
+def image_ecu_warnings(image: bytes, live_vin: str, live_osid: str) -> tuple[str, ...]:
+    """Wrong-file checks. Boot is not written, so OS/boot pairing matters."""
+    out: list[str] = []
+    img_vin = image_vin(image)
+    live = "".join(c for c in (live_vin or "") if c.isalnum()).upper()
+    if len(live) == 17:
+        if not img_vin:
+            out.append(f"Image has no VIN at 0x{VIN_ADDR:X}; ECU VIN is {live}.")
+        elif img_vin != live:
+            out.append(f"Image VIN {img_vin} != ECU VIN {live}.")
+    osid = (live_osid or "").strip()
+    if len(osid) >= 7:
+        needle = osid.encode("ascii", "ignore")
+        if needle and needle not in image:
+            out.append(
+                f"ECU CAL {osid} is not in this image. Boot on the ECU is not rewritten."
+            )
+    return tuple(out)
+
+
+def estimate_write_minutes(dests: tuple[Dest, ...] | list[Dest]) -> tuple[int, int]:
+    """Host-side band. HAS erase/program dominates the upper end."""
+    chunks = sum(max(1, d.size // CHUNK) for d in dests)
+    host_s = chunks * chunk_host_s()
+    host_s += sum(40.0 if d.dual_module else 8.0 for d in dests)
+    lo = max(1, int(host_s / 60))
+    hi = max(lo + 1, int(host_s * 2.2 / 60) + (8 if any(d.dual_module for d in dests) else 2))
+    return lo, hi
 
 
 def blank_probe_addrs(dest: Dest) -> tuple[int, ...]:
@@ -464,6 +512,31 @@ def _erase_timeout(dest: Dest) -> float:
     return 60.0
 
 
+def rollback_committed_dests(bus, items: list, ext, log: LogFn) -> None:
+    """Erase+program preread for dests already dump-matched in this job."""
+    if not items:
+        return
+    log(
+        f"rolling back {len(items)} dest(s) already programmed — "
+        "a mixed OS/HAS image can be a no-start"
+    )
+    for dest, blob in reversed(list(items)):
+        if not isinstance(dest, Dest):
+            dest = dest_by_addr(dest)
+        if not blob or len(blob) != dest.size:
+            log(f"rollback skip {dest.name}: no preread")
+            continue
+        try:
+            if ext is None or not ext.is_kernel_alive(0.5):
+                log(f"rollback {dest.name} skipped. {HUNG_KERNEL_MSG}")
+                return
+            log(f"rollback {dest.name} from preread")
+            restore_preread(bus, dest, blob, "erase_then_program", ext, log)
+        except Exception as exc:
+            log(f"rollback {dest.name} failed: {exc}")
+            return
+
+
 def reset_to_stock_best_effort(bus, log: LogFn) -> None:
     """$11 from a live W1. Used when a multi-dest job aborts with the helper still up."""
     if bus is None:
@@ -508,6 +581,8 @@ def execute_write(
     dest: Dest | int | None = None,
     reuse_kernel: bool = False,
     reset: bool = True,
+    allow_image_mismatch: bool = False,
+    rollback: list | None = None,
     log: LogFn | None = None,
     progress: Callable[[dict], None] | None = None,
     stop_check: Callable[[], bool] | None = None,
@@ -632,6 +707,11 @@ def execute_write(
             vin, osid = ext.probe_identity()
             _log(f"identity VIN={vin or '—'}  CAL={osid or '—'}")
             tick(f"Identity VIN={vin or '—'}  CAL={osid or '—'}", 1)
+            warns = image_ecu_warnings(plan.image, vin or "", osid or "")
+            for w in warns:
+                _log(f"image check: {w}")
+            if warns and not allow_image_mismatch:
+                raise WriteBlocked("Image does not match this ECU. " + " ".join(warns))
             tick(f"Uploading write kernel for {dest.name}", 3)
             if not ext.upload_kernel(require_early=True):
                 raise WriteBlocked("Write kernel did not start (EARLY 2-byte seed required).")
@@ -772,13 +852,15 @@ def execute_write(
             note = str(path)
         elif WRITES_DIR:
             note = str(WRITES_DIR)
-        return WriteOutcome(ok=True, dests_done=done, path=note)
+        return WriteOutcome(ok=True, dests_done=done, path=note, preread=preread)
     except WriteBlocked:
         restore_after_fault()
+        rollback_committed_dests(bus, list(rollback or ()), ext, _log)
         _try_reset_to_stock(ext, bus, _log)
         raise
     except Exception as exc:
         restore_after_fault()
+        rollback_committed_dests(bus, list(rollback or ()), ext, _log)
         _try_reset_to_stock(ext, bus, _log)
         raise WriteBlocked(f"{type(exc).__name__}: {exc}") from exc
     finally:
