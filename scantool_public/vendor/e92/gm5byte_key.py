@@ -20,21 +20,24 @@ E92A_ALGO_146_BLOB = (
     "01sgqbD6nsKDz8SawCanylLyqwtoFUeMsY2Y6FxEi4rP0A9QCSAP8Ivi0OzQk="
 )
 
-# Precomputed AES-128 keys indexed by seed[4] (SHA-256 chain done offline).
-# Precomputed AES-128 keys indexed by seed[4].
-E92A_PRECOMPUTED_AES_KEYS: tuple[bytes, ...] = (
-    bytes.fromhex("4A960562BCF11607FAAE8D4FFA15B43B"),
-    bytes.fromhex("ABEE96F83C41130A69A09061C616A1A6"),
-    bytes.fromhex("BFCA18E93DD1E136F601A8E0D67BCE58"),
-    bytes.fromhex("9ECA301AF71E12B9738897372386B14C"),
-    bytes.fromhex("C2F2D72E7153E8870587038A0DE1B102"),
-    bytes.fromhex("75C1FC204CC80034A7810D11BDA3C069"),
-    bytes.fromhex("8F1D7E62A7D6CF4EA6071C3A32A420F0"),
-    bytes.fromhex("C341C76E2C288E7CF583EDE1466597AC"),
-    bytes.fromhex("995F00F6493D1DF10F2982CDE8E5E3DB"),
-    bytes.fromhex("AA8832D761E2210F3C18C04CBBB17872"),
-    bytes.fromhex("B20A9B0FA9EC283CFC49AC026A7CA52F"),
-)
+def _precomputed_aes_keys_from_blob() -> tuple[bytes, ...]:
+    """SHA-256 chain of the algo-146 secret, one AES key per seed[4] 0..10.
+
+    Built at import so the table cannot diverge from `compute_key` by a
+    transcribed byte (2026-09-10: old table[8] had E8E5E3DB vs E8E53BDB).
+    """
+    rec = parse_password_blob(E92A_ALGO_146_BLOB)
+    keys: list[bytes] = []
+    for tail in range(11):
+        max_seed = 255 - tail
+        if rec.min_seed > max_seed:
+            keys.append(b"\x00" * 16)
+            continue
+        digest = rec.secret
+        for _ in range(max_seed - rec.min_seed):
+            digest = hashlib.sha256(digest).digest()
+        keys.append(digest[:16])
+    return tuple(keys)
 
 BENCH_SEED_E92A = bytes.fromhex("8785EEC106")
 BENCH_KEY_E92A = bytes.fromhex("08B3B3656D")
@@ -184,6 +187,9 @@ def derive_key_from_blob(blob: str, seed: bytes, algo: int) -> tuple[bytes, int,
     block[11:16] = seed
     mac = _aes128_encrypt(aes_key, bytes(block))[:5]
     return mac, iterations, aes_key
+
+
+E92A_PRECOMPUTED_AES_KEYS: tuple[bytes, ...] = _precomputed_aes_keys_from_blob()
 
 
 def derive_key_from_algo(
