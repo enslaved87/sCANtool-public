@@ -601,6 +601,7 @@ class Session(QObject):
         done = 0
         payload: dict = {"ok": False, "error": "", "dests_done": 0, "path": str(path)}
         bus = None
+        resident = False
         committed: list = []
         in_dest = False
         try:
@@ -609,6 +610,7 @@ class Session(QObject):
                 if self._cancel_read.is_set():
                     raise WriteBlocked("Write cancelled.")
                 part = i + 1
+                last = i + 1 == n
 
                 def prog(info: dict, _i=i, _addr=addr) -> None:
                     inner = int(info.get("pct") or 0)
@@ -630,13 +632,14 @@ class Session(QObject):
                     stop_check=self._cancel_read.is_set,
                     progress=prog,
                     bus=bus,
-                    reuse_kernel=False,
-                    reset=True,
+                    reuse_kernel=resident,
+                    reset=last,
                     allow_image_mismatch=allow_image_mismatch,
                     rollback=committed,
                 )
                 in_dest = False
                 done += int(out.dests_done or 0)
+                resident = not last
                 if out.preread:
                     committed.append((addr, out.preread))
                 payload["path"] = out.path or payload["path"]

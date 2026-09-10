@@ -17,13 +17,14 @@ Vehicle scan, identity, datalog, E92 full-read, and EARLY E92 flash write.
   (censorship password). Read-only; it does not program NVPWD.
 - **Write (EARLY only)** — Standard mode is **Write calibration** (LAS
   `0x40000` / `0x60000` + MAS) or **Write entire** (cal + OS + HAS).
-  Advanced mode writes one dest. Each dest uploads a fresh write helper
-  and returns to stock OS. Boot, VIN, and `0x1F000` are not written.
-  Write entire is not atomic. If a later dest fails and the helper is
-  still alive, already-written dests are rolled back to the pre-write
-  image. If the helper is silent, rollback cannot run — B+ off 8–10 s,
-  then run **Write entire** again with the same image to heal mixed
-  cal/OS/HAS. Image VIN (`0x100B4`) and live CAL are checked before dest 1.
+  Advanced mode writes one dest. Dests in one job share the write helper
+  and reset to stock when the last dest finishes. Boot, VIN, and
+  `0x1F000` are not written. Write entire is not atomic. If a later dest
+  fails and the helper is still alive, already-written dests are rolled
+  back to the pre-write image. If the helper is silent, rollback cannot
+  run — B+ off 8–10 s, then run **Write entire** again with the same
+  image to heal mixed cal/OS/HAS. Image VIN (`0x100B4`) and live CAL
+  are checked before dest 1.
   LATE modules are refused. This reader's `…F800` holes (`0xFF` fill)
   are replaced from live flash on write so a self-read can go back.
 
@@ -80,8 +81,8 @@ A full E92 read takes several minutes. Do not key-off until the tool says
 the ECM is back on stock OS.
 
 A write can brick the module if power is lost. Confirm all three boxes on
-the Write tab. Each dest uploads a fresh write helper; stock OS returns
-after that dest. Power-cycle B+ if the helper is silent.
+the Write tab. Dests in one job share the write helper; stock OS returns
+after the last dest. Power-cycle B+ if the helper is silent.
 A hung write helper needs B+ off 8–10 s — software reset does nothing.
 Do not key-off until the tool reconnects.
 
@@ -120,12 +121,12 @@ from a clone. Attach that zip as a Release asset; do not commit it.
 
 ## Notes (v1.0.1)
 
-- Write entire / calibration is dest-by-dest on **one kernel per dest**
-  (chaining dests on one live W1 over-erased neighbors on 2026-09-06).
-  A mid-job dropout used to leave new cal/OS on old HAS with no warning.
-  The tool still rolls back dests that already dump-matched when the
-  helper is still alive, and tells you to re-run the same job after a
-  B+ cycle if it is not.
+- Write entire / calibration is dest-by-dest on **one write helper**.
+  The helper zeros LMSR+HSR before each `$6B`/`$6C` so leftover select
+  bits cannot over-erase neighbors. A mid-job dropout used to leave new
+  cal/OS on old HAS with no warning. The tool rolls back dests that
+  already dump-matched when the helper is still alive, and tells you to
+  re-run the same job after a B+ cycle if it is not.
 - Wrong 4 MiB file: image VIN and live CAL are compared before dest 1.
 - Startup failures show a dialog (windowed exe has no console).
 - Short ISO-TP frames no longer crash scan/identity.

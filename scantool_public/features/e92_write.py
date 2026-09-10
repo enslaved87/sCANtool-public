@@ -1,6 +1,6 @@
 """EARLY E92 flash write using this product's SCPB-W1 SRAM helper.
 
-One dest per kernel. LATE, boot, VIN, and 0x1F000 are refused.
+One dest at a time on the live helper. LATE, boot, VIN, and 0x1F000 are refused.
 HAS dests 0x100000–0x380000 are enabled (HAS_PUBLIC_GO).
 """
 
@@ -48,9 +48,10 @@ HUNG_KERNEL_MSG = (
 )
 # Dual-module HAS dests (0x100000–0x380000). Off refuses them.
 HAS_PUBLIC_GO = True
-# Dest 2+ on a live helper is not dump-matched (2026-09-06 H0 over-erase).
-# Write calibration / Write entire upload a fresh W1 per dest.
-ALLOW_REUSE_KERNEL = False
+# Dest 2+ keeps the live W1 (Write entire / calibration). Kernel zeros
+# LMSR+HSR before each $6B/$6C so leftover select bits cannot over-erase
+# neighbors (HAS H0 2026-09-06). Reset to stock after the last dest.
+ALLOW_REUSE_KERNEL = True
 
 LogFn = Callable[[str], None]
 
@@ -629,7 +630,7 @@ def execute_write(
     bus=None,
     **_kwargs,
 ) -> WriteOutcome:
-    """Program exactly one dest. Fresh W1 each call unless ALLOW_REUSE_KERNEL."""
+    """Program exactly one dest. reuse_kernel keeps W1 for dest 2+ of this job."""
     _log = log or (lambda _m: None)
     stop = stop_check or (lambda: False)
     spec = spec or {}
