@@ -1,6 +1,6 @@
 """EARLY E92 flash write using this product's SCPB-W1 SRAM helper.
 
-One dest at a time on the live helper. LATE, boot, VIN, and 0x1F000 are refused.
+One dest per kernel. LATE, boot, VIN, and 0x1F000 are refused.
 HAS dests 0x100000–0x380000 are enabled (HAS_PUBLIC_GO).
 """
 
@@ -31,12 +31,26 @@ SKIP_TAIL_OFF = 0xF800
 SKIP_TAIL_SIZE = 0x800
 # This reader's class holes (subset of skip_tail_windows). R2 $23 fills them 0xFF.
 SKIP_TAIL_CLASS = (0x11F800, 0x3FF800)
+# KernelMPC5674F: E92 byte-load machine-check windows. Not the 2 KiB …F800
+# crash-guard. R2 still skips whole tails until a one-dest self-read of
+# 0x2F800 (excluding these 8 B) is proven on metal.
+ECC_HOLES: tuple[tuple[int, int], ...] = ((0x0001FFF8, 8), (0x0002FFF8, 8))
+
+
+def in_ecc_hole(addr: int) -> bool:
+    for lo, n in ECC_HOLES:
+        if lo <= int(addr) < lo + n:
+            return True
+    return False
 READ_N = 2048
 HUNG_KERNEL_MSG = (
     "Hung kernel: power-cycle B+ 8-10 s. Software reset is useless while the helper is silent."
 )
 # Dual-module HAS dests (0x100000–0x380000). Off refuses them.
 HAS_PUBLIC_GO = True
+# Dest 2+ on a live helper is not dump-matched (2026-09-06 H0 over-erase).
+# Write calibration / Write entire upload a fresh W1 per dest.
+ALLOW_REUSE_KERNEL = False
 
 LogFn = Callable[[str], None]
 
@@ -279,6 +293,13 @@ def splice_skip_tails(payload: bytes, dest: Dest, preread: bytes, log: LogFn) ->
 def prepare_image(raw: bytes) -> bytes:
     if len(raw) != FLASH_SIZE:
         raise WriteBlocked("Image must be exactly 4 MiB.")
+    holes = skip_tail_holes(raw)
+    class_holes = tuple(a for a in SKIP_TAIL_CLASS if a in holes)
+    if class_holes:
+        raise WriteBlocked(
+            "Image looks like an SCPB-R2 skip-tail FULLREAD "
+            f"({', '.join(hex(a) for a in class_holes)}). Use a complete 4 MiB dump."
+        )
     out = bytearray(raw)
     out[MAS_55AA_OFF : MAS_55AA_OFF + 2] = MAS_55AA
     return bytes(out)
@@ -608,7 +629,7 @@ def execute_write(
     bus=None,
     **_kwargs,
 ) -> WriteOutcome:
-    """Program exactly one dest. reuse_kernel keeps W1 for dest 2+ of this job."""
+    """Program exactly one dest. Fresh W1 each call unless ALLOW_REUSE_KERNEL."""
     _log = log or (lambda _m: None)
     stop = stop_check or (lambda: False)
     spec = spec or {}
@@ -621,6 +642,10 @@ def execute_write(
 
     if dest is None:
         raise WriteBlocked("One dest per kernel.")
+    if reuse_kernel and not ALLOW_REUSE_KERNEL:
+        raise WriteBlocked(
+            "One dest per kernel. Dest 2+ reuse is not dump-matched."
+        )
     chosen = dest_by_addr(dest)
     if chosen.dual_module and not HAS_PUBLIC_GO:
         raise WriteBlocked(

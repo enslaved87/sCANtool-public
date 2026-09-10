@@ -194,7 +194,7 @@ class MainWindow(QMainWindow):
             f"{PRODUCT_NAME} {__version__}\n\n"
             "Generic OBD-II scan (MIL, readiness, freeze frame, multi-ECU), "
             "VIN/identity, configurable datalog, E92 full-read, and EARLY E92 flash write "
-            "(one dest at a time on a shared write helper).\n\n"
+            "(one dest per kernel; stock OS returns after each dest).\n\n"
             "Adapters: Kvaser, PEAK, Vector, CANable (SLCAN/gs_usb), "
             "ELM327/OBDLink, SocketCAN, USB2CAN, IXXAT, J2534, neoVI, and more.\n"
             "ELM327 is scan/log only. E92 read/write needs raw CAN.\n\n"

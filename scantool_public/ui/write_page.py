@@ -58,8 +58,7 @@ class WritePage(QWidget):
             hint_label(
                 "EARLY E92 only. Standard mode matches what tuners already know: "
                 "Write calibration (LAS + MAS) or Write entire (cal + OS + HAS). "
-                "Dests in this job share one write helper; stock OS returns "
-                "when the last dest finishes. "
+                "Each dest uploads a fresh write helper and returns to stock OS. "
                 "This reader's …F800 holes (0xFF fill) are replaced from live "
                 "flash on write so a self-read can go back. "
                 "Do not key-off during a dest."
@@ -242,7 +241,8 @@ class WritePage(QWidget):
             title = "Write calibration"
             lo, hi = estimate_write_minutes(dests)
             detail = (
-                "Programs the calibration dests on one write helper:\n"
+                "Programs the calibration dests. Each dest uploads a fresh "
+                "write helper and returns to stock OS:\n"
                 + "\n".join(f"  • {d.name}  {d.size // 1024} KiB" for d in dests)
                 + f"\n\nExpect about {lo}–{hi} minutes. Solid B+. Do not key-off. "
                 "A dest is committed after dump-match. If a later dest fails, "
@@ -258,8 +258,8 @@ class WritePage(QWidget):
             title = "Write entire"
             lo, hi = estimate_write_minutes(dests)
             detail = (
-                "Programs calibration, OS MID, and HAS (0x40000–end of flash) "
-                "on one write helper:\n"
+                "Programs calibration, OS MID, and HAS (0x40000–end of flash). "
+                "Each dest uploads a fresh write helper and returns to stock OS:\n"
                 + "\n".join(f"  • {d.name}  {d.size // 1024} KiB" for d in dests)
                 + "\n\nThis is NOT a full-chip write. Boot, VIN, and 0x1F000 "
                 "stay as they are on the ECU.\n\n"

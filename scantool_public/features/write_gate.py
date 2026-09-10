@@ -65,8 +65,8 @@ GATES: tuple[WriteGate, ...] = (
         "one_dest",
         "One dest at a time",
         True,
-        "One dest at a time on the live helper. Reset to stock when the job "
-        "finishes or faults. Power-cycle B+ if the helper is silent.",
+        "One dest per kernel. Dest 2+ reuse is not dump-matched. "
+        "Reset to stock after each dest. Power-cycle B+ if the helper is silent.",
     ),
     WriteGate(
         "metal_signoff",
