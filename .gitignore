@@ -6,7 +6,8 @@ __pycache__/
 venv/
 env/
 outputs/
-tests/
+tests/_metal_*
+tests/__pycache__/
 dist/
 build/
 release/

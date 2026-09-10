@@ -119,6 +119,15 @@ compiler `.o` / `.elf` / `.map` files.
 End users download `sCANtool-windows.zip` from GitHub Releases, not
 from a clone. Attach that zip as a Release asset; do not commit it.
 
+## Notes (v1.0.2)
+
+- Write calibration / Write entire keep one write helper for the job
+  (`reuse_kernel` on dest 2+; `$11` after the last dest). The helper zeros
+  LMSR+HSR before each `$6B`/`$6C`. VIN/CAL are checked before dest 1.
+  Committed dests roll back if a later dest faults and the helper is alive.
+- SCPB-R2 skip-tail FULLREADs (`0x11F800` / `0x3FF800` filled `0xFF`) are
+  refused. Use a complete 4 MiB dump.
+
 ## Notes (v1.0.1)
 
 - Write entire / calibration is dest-by-dest on **one write helper**.
