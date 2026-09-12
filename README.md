@@ -38,6 +38,8 @@ demo adapter. Read and write kernels are never resident together.
 The Windows exe is **not** in this git tree. Download the zip from
 [Releases](https://github.com/enslaved87/sCANtool-public/releases)
 (`sCANtool-windows.zip`), unzip it, and double-click `sCANtool.exe`.
+Current release is **v1.0.3** (algo-146 AES table generated from the blob;
+do not use the v1.0.2 zip).
 `LICENSE` is in that folder.
 
 Kvaser / Peak / SLCAN adapters need their vendor driver installed on
