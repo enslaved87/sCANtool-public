@@ -14,6 +14,9 @@ SRAM-only reader for early/late E92 (MPC5674F).
   `0xFF`. Shadow (`0x00FFC000`, NVPWD at `0x00FFFDD8`) is not skipped.
 - `$11` ACKs then hits SIU `SRCR` so the ECM returns to stock
 - **Never** erases or programs flash
+- Clears EE at `_start` and pets the Book-E TSR plus the DSPI_D
+  companion watchdog from C wait loops (~12.5 ms). Does **not** leave
+  the bootloader's flash eMIOS11 ISR running.
 
 Build (Windows, SysGCC):
 

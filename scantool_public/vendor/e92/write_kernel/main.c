@@ -10,11 +10,15 @@
  * programmed flash — the host waits for the SCPB dest ack.
  * Program is EHV every 16 B (HAS: every 32 B dual-mod). One EHV per
  * 4 KiB folds to the last 16 B and is refused.
+ *
+ * EE is cleared at _start. C wait loops pet Book-E TSR + DSPI_D
+ * companion so the flash eMIOS11 ISR is not required.
  */
 
 #include <stdint.h>
 #include "mpc5674_flexcan.h"
 #include "mpc5674_c90fl.h"
+#include "mpc5674_watchdog.h"
 
 #define RX_ID      0x7E0u
 #define TX_ID      0x7E8u
@@ -83,6 +87,7 @@ static uint8_t recv8(uint8_t out[8])
     uint8_t dlc;
 
     while (((*cana(CANA_IFLAG1)) & (1u << MB_RX)) == 0u) {
+        scpb_wd_poll();
     }
     cs = *cana_mb(MB_RX, 0);
     w0 = *cana_mb(MB_RX, 8);
@@ -124,6 +129,9 @@ static void send8(const uint8_t in[8], uint8_t dlc)
     for (n = 0; n < 0x100000u; n++) {
         if ((*cana(CANA_IFLAG1)) & (1u << MB_TX)) {
             break;
+        }
+        if ((n & 0x3FFu) == 0u) {
+            scpb_wd_poll();
         }
     }
     *cana(CANA_IFLAG1) = (1u << MB_TX);
@@ -244,6 +252,7 @@ static int wait_done(uint32_t base)
         if ((*mcr) & MCR_DONE) {
             return 1;
         }
+        scpb_wd_poll();
     }
     return 0;
 }
@@ -260,6 +269,7 @@ static int wait_erase_done(uint32_t base)
                 saw_busy = 1;
                 break;
             }
+            scpb_wd_poll();
         }
     }
     if (!saw_busy) {
@@ -527,6 +537,7 @@ static void finish_program(void)
 
 void scpb_write_main(void)
 {
+    scpb_wd_init();
     leave_halt();
     mb_idle_all();
     arm_rx();

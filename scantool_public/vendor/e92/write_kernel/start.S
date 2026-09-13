@@ -5,6 +5,8 @@
     .type   _start, @function
 
 _start:
+    /* EE off before any C. Bootloader eMIOS11 ISR lives in flash. */
+    wrteei  0
     lis     %r3, __bss_beg@h
     ori     %r3, %r3, __bss_beg@l
     lis     %r4, __bss_end@h

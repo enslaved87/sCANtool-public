@@ -11,6 +11,7 @@
 
 #include <stdint.h>
 #include "mpc5674_flexcan.h"
+#include "mpc5674_watchdog.h"
 
 #define RX_ID     0x7E0u
 #define TX_ID     0x7E8u
@@ -103,6 +104,7 @@ static int unpack_mb(uint8_t out[8])
 static uint8_t recv8(uint8_t out[8])
 {
     while (((*cana(CANA_IFLAG1)) & (1u << MB_RX)) == 0u) {
+        scpb_wd_poll();
     }
     return (uint8_t)unpack_mb(out);
 }
@@ -113,6 +115,9 @@ static int recv8_to(uint8_t out[8], uint32_t spins)
     for (n = 0; n < spins; n++) {
         if ((*cana(CANA_IFLAG1)) & (1u << MB_RX)) {
             return unpack_mb(out);
+        }
+        if ((n & 0x3FFu) == 0u) {
+            scpb_wd_poll();
         }
     }
     return -1;
@@ -138,6 +143,9 @@ static void send8(const uint8_t in[8], uint8_t dlc)
     for (n = 0; n < 0x100000u; n++) {
         if ((*cana(CANA_IFLAG1)) & (1u << MB_TX)) {
             break;
+        }
+        if ((n & 0x3FFu) == 0u) {
+            scpb_wd_poll();
         }
     }
     *cana(CANA_IFLAG1) = (1u << MB_TX);
@@ -289,6 +297,7 @@ static void do_reset(uint8_t sub)
 
 void scpb_main(void)
 {
+    scpb_wd_init();
     leave_halt();
     mb_idle_all();
     arm_rx();

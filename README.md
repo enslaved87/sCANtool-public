@@ -38,8 +38,8 @@ demo adapter. Read and write kernels are never resident together.
 The Windows exe is **not** in this git tree. Download the zip from
 [Releases](https://github.com/enslaved87/sCANtool-public/releases)
 (`sCANtool-windows.zip`), unzip it, and double-click `sCANtool.exe`.
-Current release is **v1.0.3** (algo-146 AES table generated from the blob;
-do not use the v1.0.2 zip).
+Current release is **v1.0.4** (faster EARLY write; algo-146 AES table
+generated from the blob. Do not use the v1.0.2 zip).
 `LICENSE` is in that folder.
 
 Kvaser / Peak / SLCAN adapters need their vendor driver installed on
@@ -88,6 +88,10 @@ after the last dest. Power-cycle B+ if the helper is silent.
 A hung write helper needs B+ off 8–10 s — software reset does nothing.
 Do not key-off until the tool reconnects.
 
+Write calibration is typically a few minutes. Write entire is about
+fifteen minutes (one helper, send-all `$6C`). Do not key-off until the
+tool says the ECM is back on stock OS.
+
 ## Kernels
 
 The read kernel source is `scantool_public/vendor/e92/read_kernel/`.
@@ -121,12 +125,24 @@ compiler `.o` / `.elf` / `.map` files.
 End users download `sCANtool-windows.zip` from GitHub Releases, not
 from a clone. Attach that zip as a Release asset; do not commit it.
 
-## Notes (v1.0.2)
+## Notes (v1.0.4)
 
-- Write calibration / Write entire keep one write helper for the job
-  (`reuse_kernel` on dest 2+; `$11` after the last dest). The helper zeros
-  LMSR+HSR before each `$6B`/`$6C`. VIN/CAL are checked before dest 1.
-  Committed dests roll back if a later dest faults and the helper is alive.
+- Write `$6C` is send-all, one SCPB dest ack (no per-frame recv). Host
+  pacing is 0.5 ms/frame. Write calibration (LAS `0x40000` / `0x60000` +
+  MAS) completed in **3 min 18 s** on metal. Write entire (cal + OS MID +
+  HAS H0–H5) completed in **15 min 9 s** with all dests verified. The
+  previous path was ~90 minutes.
+- Dest 2+ keeps one write helper (`reuse_kernel`; `$11` after the last
+  dest). The helper zeros LMSR+HSR before each `$6B`/`$6C`. VIN/CAL are
+  checked before dest 1. Committed dests roll back if a later dest faults
+  and the helper is alive.
+- Write kernel pets Book-E TSR + DSPI_D companion in wait loops so the
+  flash eMIOS11 ISR is not required to keep the module alive.
+
+## Notes (v1.0.3)
+
+- **Do not use v1.0.2.** The algo-146 AES table is generated from the
+  blob in this tree.
 - SCPB-R2 skip-tail FULLREADs (`0x11F800` / `0x3FF800` filled `0xFF`) are
   refused. Use a complete 4 MiB dump.
 

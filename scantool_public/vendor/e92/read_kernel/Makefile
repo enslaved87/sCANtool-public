@@ -10,7 +10,7 @@ SIZE     := $(PREFIX)size
 CPUFLAGS := -mcpu=e300c2 -mbig
 CFLAGS   := $(CPUFLAGS) -std=c11 -Os -Wall -Wextra -ffreestanding \
             -fno-builtin -fno-common -fno-stack-protector -nostdlib \
-            -msdata=none -fomit-frame-pointer
+            -msdata=none -fomit-frame-pointer -I..
 LDFLAGS  := $(CPUFLAGS) -nostdlib -Wl,-T,kernel.ld -Wl,-Map,kernel.map \
             -Wl,--gc-sections
 
@@ -24,7 +24,7 @@ start.o: start.S
 eabi_rest.o: eabi_rest.S
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-main.o: main.c mpc5674_flexcan.h
+main.o: main.c mpc5674_flexcan.h ../mpc5674_watchdog.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 kernel.elf: start.o main.o eabi_rest.o kernel.ld

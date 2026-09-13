@@ -73,6 +73,7 @@ GATES: tuple[WriteGate, ...] = (
         "EARLY dest-gate",
         True,
         "LAS, MAS, OS MID, and HAS dests are enabled for EARLY modules. "
+        "Dest 2+ identity NOR 2026-09-13 (cal ~3 min, write-entire ~15 min). "
         "Boot, VIN, 0x1F000, and LATE stay refused.",
     ),
 )

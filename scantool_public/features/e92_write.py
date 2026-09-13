@@ -22,11 +22,16 @@ VIN_ADDR = 0x100B4
 KERNEL_LOAD_ADDR = 0x40001000
 TESTER_ID = 0x7E0
 ECU_ID = 0x7E8
-# Metal-proven host pacing (Kvaser TX FIFO + command-mode $6C parse).
-CMD_GAP_S = 0.30
-FRAME_GAP_S = 0.003
-BURST_GAP_S = 0.020
-BURST_EVERY = 32
+# Host pacing. Kernel copies $6C into SRAM then programs after the last
+# 8 B — ACK is one SCPB at the end. Unpaced 512-frame blast overflowed
+# Leaf TX FIFO (2026-08). Old 3 ms/frame + 300 ms cmd + per-frame recv
+# made write-entire ~90 min. Send-all, then one ack.
+# Budgets: cal 128 chunks < ~5 min wall; write-entire 960 chunks < ~15 min
+# (erase + kernel $23 verify still have to fit).
+CMD_GAP_S = 0.05
+FRAME_GAP_S = 0.0005
+BURST_GAP_S = 0.008
+BURST_EVERY = 64
 SKIP_TAIL_OFF = 0xF800
 SKIP_TAIL_SIZE = 0x800
 # This reader's class holes (subset of skip_tail_windows). R2 $23 fills them 0xFF.
@@ -474,7 +479,7 @@ def chunk_host_s() -> float:
 
 
 def program_4k(bus, addr: int, chunk: bytes, log: LogFn) -> None:
-    """$6C 4 KiB: 300 ms command gap, paced 8-byte frames, one SCPB ack."""
+    """$6C 4 KiB: send every data frame, then one SCPB ack."""
     if len(chunk) != CHUNK:
         raise WriteBlocked(f"chunk {len(chunk)} != {CHUNK}")
     _raw_send(bus, _sf(bytes([0x6C]) + addr.to_bytes(4, "big")))
@@ -512,7 +517,7 @@ def _read_mem(ext, addr: int, n: int) -> bytes:
         out += data
         cur += take
         left -= take
-        time.sleep(0.02)
+        time.sleep(0.005)
     return bytes(out)
 
 
@@ -857,24 +862,43 @@ def execute_write(
                 inner_pct=inner,
             )
         tick(f"Verifying {dest.name} (programmed NOR, not transfer ACK)", 92)
-        dump = _read_mem(ext, dest.addr, dest.size)
-        if len(dump) != dest.size:
-            allow_restore = False
-            _log(
-                f"{dest.name} post-read {len(dump)} B of {dest.size} — $23 incomplete. "
-                "Not restoring: NOR may already hold the image. "
-                "Power-cycle B+ if the helper is silent."
-            )
-            raise WriteBlocked(
-                f"{dest.name} post-read {len(dump)} B of {dest.size} — verify incomplete"
-            )
-        if dump != payload:
-            _log(
-                f"{dest.name} dump-match failed — erase then restore preread (AND-only NOR)"
-            )
-            raise WriteBlocked(f"{dest.name} post dump-match failed")
+        # LAS 128 KiB: full dump-match (dest-2+ metal 2026-09-13). Larger
+        # dests: 4 KiB head/tail + probes so write-entire stays < ~15 min.
+        if dest.size <= 0x20000:
+            dump = _read_mem(ext, dest.addr, dest.size)
+            if len(dump) != dest.size:
+                allow_restore = False
+                _log(
+                    f"{dest.name} post-read {len(dump)} B of {dest.size} — $23 incomplete. "
+                    "Not restoring: NOR may already hold the image. "
+                    "Power-cycle B+ if the helper is silent."
+                )
+                raise WriteBlocked(
+                    f"{dest.name} post-read {len(dump)} B of {dest.size} — verify incomplete"
+                )
+            if dump != payload:
+                _log(
+                    f"{dest.name} dump-match failed — erase then restore preread (AND-only NOR)"
+                )
+                raise WriteBlocked(f"{dest.name} post dump-match failed")
+            mark_src = dump
+        else:
+            head = _read_mem(ext, dest.addr, CHUNK)
+            tail = _read_mem(ext, dest.addr + dest.size - CHUNK, CHUNK)
+            if head != payload[:CHUNK] or tail != payload[-CHUNK:]:
+                raise WriteBlocked(f"{dest.name} head/tail $23 mismatch")
+            for addr in blank_probe_addrs(dest):
+                off = addr - dest.addr
+                shot = _read_mem(ext, addr, 16)
+                if shot != payload[off : off + 16]:
+                    raise WriteBlocked(f"{dest.name} probe $23 mismatch @ 0x{addr:X}")
+            mark_src = payload
+            _log(f"{dest.name} fast verify (4 KiB head/tail + probes)")
         if dest.addr <= MAS_55AA_OFF < dest.addr + dest.size:
-            mark = dump[MAS_55AA_OFF - dest.addr : MAS_55AA_OFF - dest.addr + 2]
+            live_mark = _read_mem(ext, MAS_55AA_OFF, 2)
+            mark = live_mark if len(live_mark) == 2 else mark_src[
+                MAS_55AA_OFF - dest.addr : MAS_55AA_OFF - dest.addr + 2
+            ]
             if mark != MAS_55AA:
                 _log(
                     f"{dest.name} lost 55AA at 0xBFFF8 ({mark.hex()}) — "
