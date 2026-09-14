@@ -31,7 +31,9 @@ Vehicle scan, identity, datalog, E92 full-read, and EARLY/LATE E92 flash write.
   image to heal mixed cal/OS/HAS. Image VIN (`0x100B4`) and live CAL
   are checked before dest 1.
   This reader's `…F800` holes (`0xFF` fill)
-  are replaced from live flash on write so a self-read can go back.
+  are replaced from live flash on clone, then from a same-OS
+  `{OSID}_SKIP_TAILS.bin` beside the image if live is still `FF`.
+  `0x1F800` is never programmed.
 
 ## What it does not do
 
@@ -43,7 +45,7 @@ Read and write kernels are never resident together.
 The Windows exe is **not** in this git tree. Download the zip from
 [Releases](https://github.com/enslaved87/sCANtool-public/releases)
 (`sCANtool-windows.zip`), unzip it, and double-click `sCANtool.exe`.
-Current release is **v1.0.10** (clone accepts SCPB-R2 FULLREADs; W1 $23 of skip-tails).
+Current release is **v1.0.11** (clone fills R2 skip-tails from live, then `{OSID}_SKIP_TAILS.bin`).
 `LICENSE` is in that folder.
 
 Kvaser / Peak / SLCAN adapters need their vendor driver installed on
@@ -128,6 +130,14 @@ compiler `.o` / `.elf` / `.map` files.
 
 End users download `sCANtool-windows.zip` from GitHub Releases, not
 from a clone. Attach that zip as a Release asset; do not commit it.
+
+## Notes (v1.0.11)
+
+- Clone skip-tails: live NOR first; if still `FF`, fill from a same-OS
+  `{OSID}_SKIP_TAILS.bin` next to the 4 MiB image (never a different OS).
+  Never programs `0x1F800`. LATE guinea-pig: 46 overlay tails grafted
+  dump-match; 2 already live (`0xBF800`, `0x11F800`). Stock `$1A 90`
+  VIN `1GNSCHKC5KR296631` after graft.
 
 ## Notes (v1.0.10)
 

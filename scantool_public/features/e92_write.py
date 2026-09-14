@@ -14,7 +14,13 @@ from pathlib import Path
 from typing import Callable
 
 from scantool_public.features.write_gate import WriteBlocked
-from scantool_public.paths import WRITE_KERNEL, WRITES_DIR, add_vendor_to_path, ensure_user_dirs
+from scantool_public.paths import (
+    READS_DIR,
+    WRITE_KERNEL,
+    WRITES_DIR,
+    add_vendor_to_path,
+    ensure_user_dirs,
+)
 
 FLASH_SIZE = 0x400000
 CHUNK = 0x1000
@@ -38,6 +44,8 @@ SKIP_TAIL_OFF = 0xF800
 SKIP_TAIL_SIZE = 0x800
 # This reader's class holes (subset of skip_tail_windows). R2 $23 fills them 0xFF.
 SKIP_TAIL_CLASS = (0x11F800, 0x3FF800)
+# Last 2 KiB of 0x10000 window. $6C 0x1F000 hangs; leave FF.
+MUTE_SKIP_TAIL = 0x1F800
 # KernelMPC5674F: E92 byte-load machine-check windows. Not the 2 KiB …F800
 # crash-guard. R2 still skips whole tails until a one-dest self-read of
 # 0x2F800 (excluding these 8 B) is proven on metal.
@@ -244,6 +252,7 @@ def clone_scope(*, late: bool = False, shadow: bool = False) -> dict:
                 "VIN tiles 0x10000 / 0x14000 / 0x18000 from the image",
                 "Boot tiles 0xC000 / 0x8000 / 0x4000 / 0x0",
                 "Shadow / NVPWD (16 KiB @ 0xFFC000) when a shadow dump sits next to the image",
+                "R2 skip-tails from live NOR, then same-OS {OSID}_SKIP_TAILS.bin if live is FF",
             ),
             "does_not_write": (
                 "4 KiB at 0x1F000 — left erased FF (helper does not complete that dest)",
@@ -262,7 +271,9 @@ def clone_scope(*, late: bool = False, shadow: bool = False) -> dict:
             "summary": (
                 "LATE clone writes the chip except 4 KiB at 0x1F000 (left FF) "
                 "and the immobilizer/BCM. Shadow/NVPWD is cloned when a 16 KiB "
-                "shadow dump sits next to the image. The spare must already be LATE E92."
+                "shadow dump sits next to the image. R2 skip-tails come from live "
+                "NOR, then {OSID}_SKIP_TAILS.bin if live is FF. The spare must "
+                "already be LATE E92."
             ),
         }
     return {
@@ -293,8 +304,9 @@ def clone_scope(*, late: bool = False, shadow: bool = False) -> dict:
         "summary": (
             "EARLY clone is not a full-chip copy. It writes calibration, OS, HAS, "
             "and VIN from the image. LATE clone writes boot plus the rest of the "
-            "chip except 0x1F000 and immobilizer/BCM. The spare must already be "
-            "the same family."
+            "chip except 0x1F000 and immobilizer/BCM. R2 skip-tails come from live "
+            "NOR, then {OSID}_SKIP_TAILS.bin if live is FF. The spare must already "
+            "be the same family."
         ),
     }
 
@@ -483,12 +495,74 @@ def skip_tail_holes(image: bytes, lo: int = 0x10000, hi: int | None = None) -> t
     return tuple(found)
 
 
-def splice_skip_tails(payload: bytes, dest: Dest, preread: bytes, log: LogFn) -> bytes:
-    """Replace this reader's 0xFF …F800 fill with live NOR from W1 preread.
+def image_os_ascii(image: bytes) -> str:
+    if len(image) >= 0xC0118:
+        raw = bytes(image[0xC0110:0xC0118])
+        if all(0x30 <= b <= 0x39 for b in raw):
+            return raw.decode("ascii")
+    return ""
 
-    SCPB-R2 cannot $23 those 2 KiB. SCPB-W1 $23 has no flash_hole, so the
-    dest preread is the real tail. Programming the 0xFF fill after $6B
-    would blank them.
+
+_OVERLAY_MEMO: dict[str, bytes | None] = {}
+
+
+def find_skip_tail_overlay(image: bytes, image_path: Path | None = None) -> bytes | None:
+    """Same-OS 4 MiB overlay that still holds …F800 bytes R2 dumps omit.
+
+    Only `{OSID}_SKIP_TAILS.bin` — never a different OS glob. Look beside the
+    image, then Documents reads/writes.
+    """
+    os_ascii = image_os_ascii(image)
+    if not os_ascii:
+        return None
+    parent = ""
+    if image_path is not None:
+        p = Path(image_path)
+        try:
+            parent = str((p.parent if p.is_file() or p.suffix else p).resolve())
+        except OSError:
+            parent = str(p)
+    memo_key = f"{os_ascii}|{parent}"
+    if memo_key in _OVERLAY_MEMO:
+        return _OVERLAY_MEMO[memo_key]
+    name = f"{os_ascii}_SKIP_TAILS.bin"
+    dirs: list[Path] = []
+    if image_path is not None:
+        p = Path(image_path)
+        if p.is_file() or p.suffix:
+            dirs.append(p.parent)
+        elif p.is_dir():
+            dirs.append(p)
+    dirs.extend([READS_DIR, WRITES_DIR])
+    seen: set[str] = set()
+    found: bytes | None = None
+    for d in dirs:
+        c = d / name
+        try:
+            key = str(c.resolve())
+        except OSError:
+            continue
+        if key in seen or not c.is_file():
+            continue
+        seen.add(key)
+        if c.stat().st_size >= FLASH_SIZE:
+            found = c.read_bytes()[:FLASH_SIZE]
+            break
+    _OVERLAY_MEMO[memo_key] = found
+    return found
+
+
+def splice_skip_tails(
+    payload: bytes,
+    dest: Dest,
+    preread: bytes,
+    log: LogFn,
+    overlay: bytes | None = None,
+) -> bytes:
+    """Fill R2 …F800 holes from live NOR, then same-OS overlay if live is FF.
+
+    Never program 0x1F800 (mute dest). Overlay is omitted kernel data from
+    other dumps of this OS, not invented bytes.
     """
     if len(payload) != dest.size or len(preread) != dest.size:
         raise WriteBlocked(
@@ -498,15 +572,24 @@ def splice_skip_tails(payload: bytes, dest: Dest, preread: bytes, log: LogFn) ->
     n = 0
     for tail in skip_tail_windows(dest.addr, dest.addr + dest.size):
         off = tail - dest.addr
+        if tail == MUTE_SKIP_TAIL:
+            continue
         if not _tail_is_reader_hole(bytes(buf[off : off + SKIP_TAIL_SIZE]), tail):
             continue
         live = preread[off : off + SKIP_TAIL_SIZE]
-        buf[off : off + SKIP_TAIL_SIZE] = live
+        src = live
+        origin = "live NOR"
+        if _tail_is_reader_hole(live, tail) and overlay and tail + SKIP_TAIL_SIZE <= len(overlay):
+            ov = overlay[tail : tail + SKIP_TAIL_SIZE]
+            if not _tail_is_reader_hole(ov, tail):
+                src = ov
+                origin = "OS overlay"
+        buf[off : off + SKIP_TAIL_SIZE] = src
         n += 1
-        if live == b"\xff" * SKIP_TAIL_SIZE:
+        if src == b"\xff" * SKIP_TAIL_SIZE:
             log(f"  skip-tail 0x{tail:X} is FF in image and live")
         else:
-            log(f"  skip-tail 0x{tail:X} filled from live NOR (reader hole)")
+            log(f"  skip-tail 0x{tail:X} filled from {origin}")
     if n:
         log(f"  spliced {n} skip-tail(s) on {dest.name}")
     return bytes(buf)
@@ -1177,7 +1260,12 @@ def execute_write(
                 raise WriteBlocked("Shadow/NVPWD payload missing.")
         else:
             payload = plan.image[dest.addr : dest.addr + dest.size]
-        payload = splice_skip_tails(payload, dest, preread, _log)
+        overlay = (
+            find_skip_tail_overlay(plan.image, Path(path) if path else None)
+            if clone
+            else None
+        )
+        payload = splice_skip_tails(payload, dest, preread, _log, overlay=overlay)
         if dest.addr <= MAS_55AA_OFF < dest.addr + dest.size:
             buf = bytearray(payload)
             off = MAS_55AA_OFF - dest.addr

@@ -223,6 +223,39 @@ def test_skip_tail_fullread_refused(harness):
     assert _world.uploads == 0
 
 
+def test_clone_skip_tail_overlay_when_live_ff(harness, tmp_path):
+    from scantool_public.features.e92_write import _OVERLAY_MEMO, find_skip_tail_overlay
+
+    world, bus, image = harness
+    raw = bytearray(image)
+    raw[0x11F800 : 0x11F800 + SKIP_TAIL_SIZE] = b"\xff" * SKIP_TAIL_SIZE
+    fill = bytes((i * 41 + 9) & 0xFF for i in range(SKIP_TAIL_SIZE))
+    overlay = bytearray(b"\x00" * FLASH_SIZE)
+    overlay[0xC0110:0xC0118] = OSID.encode("ascii")
+    overlay[0x11F800 : 0x11F800 + SKIP_TAIL_SIZE] = fill
+    img_path = tmp_path / "dump.bin"
+    img_path.write_bytes(bytes(raw))
+    (tmp_path / f"{OSID}_SKIP_TAILS.bin").write_bytes(bytes(overlay))
+    (tmp_path / "26647691_SKIP_TAILS.bin").write_bytes(b"\x11" * FLASH_SIZE)
+    _OVERLAY_MEMO.clear()
+    world.nor[0x11F800 : 0x11F800 + SKIP_TAIL_SIZE] = b"\xff" * SKIP_TAIL_SIZE
+    out = execute_write(
+        image=bytes(raw),
+        path=img_path,
+        dest=0x100000,
+        bus=bus,
+        variant="early",
+        clone=True,
+        allow_image_mismatch=True,
+        reuse_kernel=False,
+        reset=True,
+    )
+    assert out.ok
+    assert world.nor[0x11F800 : 0x11F800 + SKIP_TAIL_SIZE] == fill
+    _OVERLAY_MEMO.clear()
+    assert find_skip_tail_overlay(bytes(raw), img_path)[0x11F800 : 0x11F800 + SKIP_TAIL_SIZE] == fill
+
+
 def test_vin_mismatch_refused(harness):
     world, bus, image = harness
     world.vin = "TESTSCANT00L99999"

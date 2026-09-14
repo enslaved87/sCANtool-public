@@ -25,8 +25,9 @@ from scantool_public.features.e92_write import (
     describe_image,
     entire_dests,
     estimate_write_minutes,
-    image_ecu_warnings,
     find_clone_shadow,
+    find_skip_tail_overlay,
+    image_ecu_warnings,
     live_module_is_late,
     writable_dests,
     write_kernel_present,
@@ -261,8 +262,10 @@ class WritePage(QWidget):
             self.preview_lbl.setText("")
         else:
             try:
-                info = describe_image(p.read_bytes())
+                data = p.read_bytes()
+                info = describe_image(data)
             except Exception:
+                data = b""
                 info = {}
             bits = []
             if info.get("vin"):
@@ -272,7 +275,11 @@ class WritePage(QWidget):
             if info.get("cal_ascii"):
                 bits.append(f"LAS {info['cal_ascii']}")
             if info.get("skip_tail_splice"):
-                bits.append("R2 skip-tails will be filled from live flash")
+                ov = find_skip_tail_overlay(data, p) if data else None
+                if ov:
+                    bits.append("R2 skip-tails: live NOR, then same-OS overlay")
+                else:
+                    bits.append("R2 skip-tails will be filled from live flash")
             lo, hi = info.get("cal_minutes") or (3, 5)
             loe, hie = info.get("entire_minutes") or (12, 16)
             lok, hik = info.get("clone_minutes") or (loe, hie)
