@@ -19,7 +19,9 @@ from PySide6.QtWidgets import (
 from scantool_public.features.e92_write import (
     FLASH_SIZE,
     calibration_dests,
+    clone_confirm_text,
     clone_dests,
+    clone_scope,
     describe_image,
     entire_dests,
     estimate_write_minutes,
@@ -60,7 +62,7 @@ class WritePage(QWidget):
             hint_label(
                 "EARLY or LATE E92. Open a 4 MiB backup, confirm, "
                 "then Write calibration, Write entire, or Clone to this ECU. "
-                "Do not key-off during a dest."
+                "Clone is not a full-chip copy. Do not key-off during a dest."
             )
         )
 
@@ -129,10 +131,7 @@ class WritePage(QWidget):
         )
         self.btn_entire.clicked.connect(lambda: self._start("entire"))
         self.btn_clone = compact_button("Clone to this ECU")
-        self.btn_clone.setToolTip(
-            "Spare/backup: writes the image including VIN onto this module. "
-            "Same EARLY/LATE family required. Immobilizer/BCM is not cloned."
-        )
+        self.btn_clone.setToolTip(clone_scope()["summary"])
         self.btn_clone.clicked.connect(lambda: self._start("clone"))
         self.btn_write = compact_button("Write dest", primary=True)
         self.btn_write.clicked.connect(lambda: self._start("dest"))
@@ -152,6 +151,8 @@ class WritePage(QWidget):
         cwrap = QWidget()
         cwrap.setLayout(crow)
         body.add_control(cwrap)
+        self.clone_scope_lbl = hint_label(clone_scope()["summary"])
+        body.add_control(self.clone_scope_lbl)
 
         self.activity = ActivityBar()
         body.add_control(self.activity)
@@ -202,6 +203,7 @@ class WritePage(QWidget):
         self.btn_cal.setVisible(not adv)
         self.btn_entire.setVisible(not adv)
         self.btn_clone.setVisible(not adv)
+        self.clone_scope_lbl.setVisible(not adv)
         ready = (
             shipped
             and self._connected
@@ -262,7 +264,11 @@ class WritePage(QWidget):
                 bits.append("R2 skip-tails will be filled from live flash")
             lo, hi = info.get("cal_minutes") or (3, 5)
             loe, hie = info.get("entire_minutes") or (12, 16)
-            bits.append(f"cal ~{lo}–{hi} min  ·  entire ~{loe}–{hie} min")
+            lok, hik = info.get("clone_minutes") or (loe, hie)
+            bits.append(
+                f"cal ~{lo}–{hi} min  ·  entire ~{loe}–{hie} min  ·  "
+                f"clone ~{lok}–{hik} min (not full-chip)"
+            )
             self.preview_lbl.setText("  ·  ".join(bits) if bits else "")
         self._sync()
 
@@ -296,13 +302,23 @@ class WritePage(QWidget):
                 return
             title = "Clone to this ECU"
             lo, hi = estimate_write_minutes(dests)
-            detail = (
-                "Writes this backup onto the connected module, including VIN.\n"
-                "Use this to make a spare of the same EARLY or LATE family.\n\n"
-                "Not cloned: boot, 0x1F000, and the vehicle immobilizer/BCM. "
-                "A cloned ECM may not start the truck until the BCM is paired.\n\n"
-                + "\n".join(f"  • {d.name}  {d.size // 1024} KiB" for d in dests)
-                + f"\n\nExpect about {lo}–{hi} minutes. Solid B+. Do not key-off."
+            detail = clone_confirm_text(minutes=(lo, hi))
+            try:
+                preview = describe_image(self._path.read_bytes())
+            except Exception:
+                preview = {}
+            ident0 = getattr(self._s, "_last_identity", {}) or {}
+            live_vin = ident0.get("vin") or "—"
+            cals0 = ident0.get("cal_ids") or []
+            live_cal = (
+                cals0[0]
+                if cals0
+                else (ident0.get("cal_id") or ident0.get("os_id") or "—")
+            )
+            detail += (
+                f"\n\nImage VIN {preview.get('vin') or '—'}  "
+                f"OS {preview.get('os_ascii') or '—'}\n"
+                f"This ECU VIN {live_vin}  CAL {live_cal}"
             )
         elif mode == "entire":
             try:

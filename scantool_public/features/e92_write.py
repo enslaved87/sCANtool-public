@@ -161,8 +161,76 @@ def entire_dests() -> tuple[Dest, ...]:
 
 
 def clone_dests() -> tuple[Dest, ...]:
-    """Write entire plus VIN page. Boot and 0x1F000 stay out."""
+    """Write entire plus VIN page. Boot, 0x1F000, and 0x20000–0x3FFFF stay out."""
     return tuple(entire_dests()) + (VIN_DEST,)
+
+
+def clone_scope() -> dict:
+    """What Clone to this ECU writes. Not a full-chip copy.
+
+    SCPB-W1 has no proven boot dest. Metal $6C at 0x1F000 hangs (no dest
+    ACK). 0x20000 is refused with this helper. Immobilizer lives in BCM.
+    """
+    dests = clone_dests()
+    return {
+        "full_chip": False,
+        "dests": dests,
+        "writes": (
+            "Calibration (LAS 0x40000 / 0x60000 + MAS)",
+            "Operating system (OS MID 0xC0000)",
+            "High flash (HAS 0x100000–end of chip)",
+            "VIN page from the image (0x10000–0x1EFFF)",
+        ),
+        "does_not_write": (
+            "Boot block (0x00000–0x0FFFF) — no proven dest on this helper",
+            "4 KiB at 0x1F000 — this helper does not complete that dest",
+            "Low flash 0x20000–0x3FFFF — not a proven dest on this helper",
+            "Immobilizer / BCM — a different module on the vehicle",
+        ),
+        "need": (
+            "The spare must already be the same EARLY or LATE E92 family.",
+            "The spare does not need the same OS ID or VIN — those come from the image.",
+            "After clone, pair the vehicle BCM or the engine may not start.",
+        ),
+        "impossible": (
+            "A full-chip copy is not possible with this write helper.",
+            "A different-family module cannot be turned into this one.",
+        ),
+        "summary": (
+            "Clone is not a full-chip copy. It writes calibration, OS, HAS, "
+            "and VIN from the image. It does not write boot, 0x1F000, "
+            "0x20000–0x3FFFF, or the immobilizer/BCM. The spare must already "
+            "be the same EARLY or LATE family."
+        ),
+    }
+
+
+def clone_confirm_text(*, minutes: tuple[int, int] | None = None) -> str:
+    scope = clone_scope()
+    lines = [
+        scope["summary"],
+        "",
+        "Writes:",
+        *[f"  • {x}" for x in scope["writes"]],
+        "",
+        "Does not write:",
+        *[f"  • {x}" for x in scope["does_not_write"]],
+        "",
+        "Required:",
+        *[f"  • {x}" for x in scope["need"]],
+        "",
+        "Not possible:",
+        *[f"  • {x}" for x in scope["impossible"]],
+        "",
+        "Dests in this job:",
+        *[f"  • {d.name}  {d.size // 1024} KiB" for d in scope["dests"]],
+    ]
+    if minutes:
+        lo, hi = minutes
+        lines.append(
+            f"\nExpect about {lo}–{hi} minutes. Solid B+. Do not key-off."
+        )
+    return "\n".join(lines)
 
 
 def describe_image(image: bytes) -> dict:
@@ -182,6 +250,10 @@ def describe_image(image: bytes) -> dict:
         lo_e, hi_e = estimate_write_minutes(entire_dests())
     except WriteBlocked:
         lo_e, hi_e = 12, 16
+    try:
+        lo_k, hi_k = estimate_write_minutes(clone_dests())
+    except WriteBlocked:
+        lo_k, hi_k = lo_e, hi_e + 1
     return {
         "vin": vin,
         "cal_ascii": cal,
@@ -190,6 +262,8 @@ def describe_image(image: bytes) -> dict:
         "skip_tail_splice": bool(holes),
         "cal_minutes": (lo_c, hi_c),
         "entire_minutes": (lo_e, hi_e),
+        "clone_minutes": (lo_k, hi_k),
+        "clone_full_chip": False,
         "size": len(image),
     }
 

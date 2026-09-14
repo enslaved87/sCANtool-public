@@ -17,11 +17,14 @@ Vehicle scan, identity, datalog, E92 full-read, and EARLY E92 flash write.
   (censorship password). Read-only; it does not program NVPWD.
 - **Write (EARLY or LATE E92)** — **Write calibration** (LAS
   `0x40000` / `0x60000` + MAS), **Write entire** (cal + OS + HAS), or
-  **Clone to this ECU** (entire plus VIN page for a spare). Advanced
+  **Clone to this ECU**. Clone is **not** a full-chip copy: it writes
+  cal + OS + HAS + VIN from the image. It does **not** write boot
+  (`0x00000–0x0FFFF`), `0x1F000` (helper hangs), `0x20000–0x3FFFF`,
+  or the immobilizer/BCM. The spare must already be the same EARLY
+  or LATE family; it does not need the same OS ID or VIN. Advanced
   mode writes one dest. Dests in one job share the write helper
-  and reset to stock when the last dest finishes. Boot and
-  `0x1F000` are not written. Clone writes VIN from the image; other
-  modes leave VIN on the ECU. Write entire is not atomic. If a later dest
+  and reset to stock when the last dest finishes. Other write modes
+  leave VIN on the ECU. Write entire is not atomic. If a later dest
   fails and the helper is still alive, already-written dests are rolled
   back to the pre-write image. If the helper is silent, rollback cannot
   run — B+ off 8–10 s, then run **Write entire** again with the same
@@ -40,7 +43,7 @@ Read and write kernels are never resident together.
 The Windows exe is **not** in this git tree. Download the zip from
 [Releases](https://github.com/enslaved87/sCANtool-public/releases)
 (`sCANtool-windows.zip`), unzip it, and double-click `sCANtool.exe`.
-Current release is **v1.0.6** (clone spare ECU, cal CS restamp, write preview).
+Current release is **v1.0.7** (clone scope: not a full-chip copy).
 `LICENSE` is in that folder.
 
 Kvaser / Peak / SLCAN adapters need their vendor driver installed on
@@ -126,10 +129,20 @@ compiler `.o` / `.elf` / `.map` files.
 End users download `sCANtool-windows.zip` from GitHub Releases, not
 from a clone. Attach that zip as a Release asset; do not commit it.
 
+## Notes (v1.0.7)
+
+- **Clone to this ECU** is not a full-chip copy. A full-chip clone is
+  not possible with this write helper (`0x1F000` hangs; boot and
+  `0x20000–0x3FFFF` have no proven dest). Clone writes cal, OS, HAS,
+  and VIN. Immobilizer/BCM is a different module. The spare must
+  already be the same EARLY or LATE family; it does not need the same
+  OS ID or VIN. The Write tab states this on-screen and in the confirm
+  dialog.
+
 ## Notes (v1.0.6)
 
-- **Clone to this ECU** writes a 4 MiB backup onto a spare of the same
-  EARLY/LATE family, including VIN. Boot and `0x1F000` stay. Immobilizer/BCM
+- **Clone to this ECU** writes cal + OS + HAS + VIN onto a spare of the
+  same EARLY/LATE family. Boot and `0x1F000` stay. Immobilizer/BCM
   is not cloned — the spare may not start the vehicle until the BCM is paired.
 - Write tab shows image VIN/OS, skip-tail splice note, and time estimate.
   Write calibration can restamp System/Fuel/Speedo/EngineDiag CS (not Engine).
