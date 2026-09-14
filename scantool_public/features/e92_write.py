@@ -512,12 +512,14 @@ def splice_skip_tails(payload: bytes, dest: Dest, preread: bytes, log: LogFn) ->
     return bytes(buf)
 
 
-def prepare_image(raw: bytes, *, mas_marker: bool = True) -> bytes:
+def prepare_image(
+    raw: bytes, *, mas_marker: bool = True, splice_skip_tails: bool = False
+) -> bytes:
     if len(raw) != FLASH_SIZE:
         raise WriteBlocked("Image must be exactly 4 MiB.")
     holes = skip_tail_holes(raw)
     class_holes = tuple(a for a in SKIP_TAIL_CLASS if a in holes)
-    if class_holes:
+    if class_holes and not splice_skip_tails:
         raise WriteBlocked(
             "Image looks like an SCPB-R2 skip-tail FULLREAD "
             f"({', '.join(hex(a) for a in class_holes)}). Use a complete 4 MiB dump."
@@ -580,7 +582,11 @@ def plan_write(
         chosen = dest
     else:
         chosen = dest_by_addr(dest, clone=clone, late=(kind == "late"))
-    prepared = prepare_image(image, mas_marker=(kind == "early" and not clone))
+    prepared = prepare_image(
+        image,
+        mas_marker=(kind == "early" and not clone),
+        splice_skip_tails=clone,
+    )
     sh = bytes(shadow) if shadow else b""
     if chosen.addr == SHADOW_DEST.addr and len(sh) != SHADOW_SIZE:
         raise WriteBlocked(
@@ -754,9 +760,8 @@ def erase_dest(bus, addr: int, log: LogFn, timeout_s: float = 60.0) -> None:
 
 
 def _skip_ranges(lo: int, hi: int) -> tuple[tuple[int, int], ...]:
+    """W1 $23 can read …F800 (dest-2+). Only skip 8 B ECC holes."""
     rows: list[tuple[int, int]] = []
-    for tail in skip_tail_windows(lo, hi):
-        rows.append((tail, SKIP_TAIL_SIZE))
     for elo, en in ECC_HOLES:
         if lo <= elo < hi:
             rows.append((elo, en))

@@ -43,7 +43,7 @@ Read and write kernels are never resident together.
 The Windows exe is **not** in this git tree. Download the zip from
 [Releases](https://github.com/enslaved87/sCANtool-public/releases)
 (`sCANtool-windows.zip`), unzip it, and double-click `sCANtool.exe`.
-Current release is **v1.0.9** (LATE clone includes shadow/NVPWD when a 16 KiB dump sits next to the image).
+Current release is **v1.0.10** (clone accepts SCPB-R2 FULLREADs; W1 $23 of skip-tails).
 `LICENSE` is in that folder.
 
 Kvaser / Peak / SLCAN adapters need their vendor driver installed on
@@ -128,6 +128,13 @@ compiler `.o` / `.elf` / `.map` files.
 
 End users download `sCANtool-windows.zip` from GitHub Releases, not
 from a clone. Attach that zip as a Release asset; do not commit it.
+
+## Notes (v1.0.10)
+
+- Clone of an SCPB-R2 FULLREAD is allowed: skip-tail `…F800` holes are
+  spliced from live NOR. Write calibration/entire still refuse those holes.
+- W1 preread/verify does not skip the 2 KiB `…F800` windows (only 8 B ECC
+  holes). Skipping them on clone wrote `FF` over live tails.
 
 ## Notes (v1.0.9)
 
