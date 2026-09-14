@@ -167,8 +167,18 @@ static void ack_err(uint8_t why, uint32_t snap)
 
 /* ---- Geometry: firmware op table + HAS 512 KiB ---- */
 
+static int is_shadow(uint32_t addr)
+{
+    return (addr >= 0x00FFC000u && addr < 0x01000000u)
+        || (addr >= 0x00EFC000u && addr < 0x00F00000u);
+}
+
 static uint32_t select_bits(uint32_t addr)
 {
+    /* SSD FlashErase shadowFlag: LMSR/HSR stay 0; interlock is shadowRowBase. */
+    if (is_shadow(addr)) {
+        return 0;
+    }
     if (addr < 0x00020000u) {
         return 1u << (addr >> 14);          /* 8 × 16 KiB */
     }
@@ -197,6 +207,12 @@ static uint32_t select_bits(uint32_t addr)
 
 static uint32_t primary_fmc(uint32_t addr)
 {
+    if (addr >= 0x00FFC000u && addr < 0x01000000u) {
+        return FMC0;
+    }
+    if (addr >= 0x00EFC000u && addr < 0x00F00000u) {
+        return FMC1;
+    }
     if (addr < 0x00080000u) {
         return FMC0;
     }
@@ -208,7 +224,7 @@ static uint32_t primary_fmc(uint32_t addr)
 
 static int is_has(uint32_t addr)
 {
-    return addr >= HAS_BASE;
+    return addr >= HAS_BASE && !is_shadow(addr);
 }
 
 /* ---- C90FL ---- */

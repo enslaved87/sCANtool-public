@@ -18,7 +18,8 @@ Vehicle scan, identity, datalog, E92 full-read, and EARLY/LATE E92 flash write.
 - **Write (EARLY or LATE E92)** — **Write calibration** (LAS
   `0x40000` / `0x60000` + MAS), **Write entire** (cal + OS + HAS), or
   **Clone to this ECU**. **LATE** clone writes the chip except 4 KiB
-  at `0x1F000` (left erased FF) and immobilizer/BCM; boot is last.
+  at `0x1F000` (left erased FF) and immobilizer/BCM. Shadow/NVPWD is
+  cloned when a 16 KiB shadow dump sits next to the image.
   **EARLY** clone is still cal + OS + HAS + VIN page only. The spare
   must already be the same family; it does not need the same OS ID
   or VIN. Advanced mode writes one dest. Dests in one job share the
@@ -42,7 +43,7 @@ Read and write kernels are never resident together.
 The Windows exe is **not** in this git tree. Download the zip from
 [Releases](https://github.com/enslaved87/sCANtool-public/releases)
 (`sCANtool-windows.zip`), unzip it, and double-click `sCANtool.exe`.
-Current release is **v1.0.8** (LATE full-chip clone dests; skip `0x1F000`).
+Current release is **v1.0.9** (LATE clone includes shadow/NVPWD when a 16 KiB dump sits next to the image).
 `LICENSE` is in that folder.
 
 Kvaser / Peak / SLCAN adapters need their vendor driver installed on
@@ -127,6 +128,13 @@ compiler `.o` / `.elf` / `.map` files.
 
 End users download `sCANtool-windows.zip` from GitHub Releases, not
 from a clone. Attach that zip as a Release asset; do not commit it.
+
+## Notes (v1.0.9)
+
+- **LATE clone** can program shadow flash / NVPWD (`0xFFC000`, 16 KiB) when
+  a 16 KiB `*SHADOW*.bin` sits next to the 4 MiB image. Erasing shadow
+  without restore censors the module. Write kernel is 4036 B (shadow dest).
+  **EARLY** clone still does not write shadow.
 
 ## Notes (v1.0.8)
 

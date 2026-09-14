@@ -90,6 +90,9 @@ LATE_CLONE_LOW: tuple[Dest, ...] = (
     Dest(0x4000, 0x4000, "Boot 0x4000"),
     Dest(0x0, 0x4000, "Boot 0x0"),
 )
+SHADOW_BASE = 0x00FFC000
+SHADOW_SIZE = 0x4000
+SHADOW_DEST = Dest(SHADOW_BASE, SHADOW_SIZE, "Shadow NVPWD")
 
 PROVEN_DESTS: tuple[Dest, ...] = (
     Dest(0x40000, 0x20000, "LAS 0x40000"),
@@ -111,6 +114,7 @@ class WritePlan:
     dests: tuple[Dest, ...]
     image: bytes
     variant: str
+    shadow: bytes = b""
 
 
 @dataclass
@@ -146,7 +150,7 @@ def dest_by_addr(addr: Dest | int, *, clone: bool = False, late: bool = False) -
     except (TypeError, ValueError) as exc:
         raise WriteBlocked("One dest per kernel.") from exc
     if clone:
-        for dest in clone_dests(late=late):
+        for dest in clone_dests(late=late, shadow=late):
             if dest.addr == want:
                 return dest
         raise WriteBlocked(f"Refused dest 0x{want:X}.")
@@ -195,16 +199,40 @@ def live_module_is_late(ident: dict | None = None, *, vin: str = "") -> bool:
     return year >= 2018
 
 
-def clone_dests(*, late: bool = False) -> tuple[Dest, ...]:
+def find_clone_shadow(image_path: Path | None) -> bytes | None:
+    """16 KiB shadow dump next to the 4 MiB image. Not inside FULLREAD."""
+    if image_path is None:
+        return None
+    p = Path(image_path)
+    if not p.is_file():
+        return None
+    cands = [p.with_name(p.stem + "_SHADOW.bin"), p.with_suffix(".shadow.bin")]
+    try:
+        cands.extend(sorted(p.parent.glob("*SHADOW*.bin")))
+    except OSError:
+        pass
+    seen: set[str] = set()
+    for c in cands:
+        key = str(c.resolve()) if c.is_file() else ""
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        if c.stat().st_size == SHADOW_SIZE:
+            return c.read_bytes()
+    return None
+
+
+def clone_dests(*, late: bool = False, shadow: bool = False) -> tuple[Dest, ...]:
     """LATE: sector dests including boot (skip 0x1F000). EARLY: entire + VIN 0xF000."""
     base = tuple(entire_dests())
     if late and LATE_FULLCHIP_GO:
-        return base + LATE_CLONE_LOW
+        extra = LATE_CLONE_LOW + ((SHADOW_DEST,) if shadow else ())
+        return base + extra
     return base + (VIN_DEST,)
 
 
-def clone_scope(*, late: bool = False) -> dict:
-    dests = clone_dests(late=late)
+def clone_scope(*, late: bool = False, shadow: bool = False) -> dict:
+    dests = clone_dests(late=late, shadow=shadow)
     if late and LATE_FULLCHIP_GO:
         return {
             "full_chip": False,
@@ -214,7 +242,8 @@ def clone_scope(*, late: bool = False) -> dict:
                 "Calibration, OS, and HAS (same as Write entire)",
                 "Low flash 0x1C000 (12 KiB), 0x20000, 0x30000",
                 "VIN tiles 0x10000 / 0x14000 / 0x18000 from the image",
-                "Boot tiles 0xC000 / 0x8000 / 0x4000 / 0x0 (last)",
+                "Boot tiles 0xC000 / 0x8000 / 0x4000 / 0x0",
+                "Shadow / NVPWD (16 KiB @ 0xFFC000) when a shadow dump sits next to the image",
             ),
             "does_not_write": (
                 "4 KiB at 0x1F000 — left erased FF (helper does not complete that dest)",
@@ -232,8 +261,8 @@ def clone_scope(*, late: bool = False) -> dict:
             ),
             "summary": (
                 "LATE clone writes the chip except 4 KiB at 0x1F000 (left FF) "
-                "and the immobilizer/BCM. Boot is last. The spare must already "
-                "be LATE E92. EARLY clone is still cal/OS/HAS/VIN only."
+                "and the immobilizer/BCM. Shadow/NVPWD is cloned when a 16 KiB "
+                "shadow dump sits next to the image. The spare must already be LATE E92."
             ),
         }
     return {
@@ -270,8 +299,10 @@ def clone_scope(*, late: bool = False) -> dict:
     }
 
 
-def clone_confirm_text(*, minutes: tuple[int, int] | None = None, late: bool = False) -> str:
-    scope = clone_scope(late=late)
+def clone_confirm_text(
+    *, minutes: tuple[int, int] | None = None, late: bool = False, shadow: bool = False
+) -> str:
+    scope = clone_scope(late=late, shadow=shadow)
     lines = [
         scope["summary"],
         "",
@@ -417,6 +448,8 @@ def skip_tail_windows(lo: int = 0x10000, hi: int = FLASH_SIZE) -> tuple[int, ...
     if hi <= lo:
         return ()
     out: list[int] = []
+    if lo >= 0x00EFC000:
+        return ()
     window = lo & ~0xFFFF
     while window < hi:
         tail = window + SKIP_TAIL_OFF
@@ -527,6 +560,7 @@ def plan_write(
     variant: str,
     seed_len: int = 0,
     clone: bool = False,
+    shadow: bytes = b"",
 ) -> WritePlan:
     if dest is None:
         raise WriteBlocked("One dest per kernel.")
@@ -547,7 +581,14 @@ def plan_write(
     else:
         chosen = dest_by_addr(dest, clone=clone, late=(kind == "late"))
     prepared = prepare_image(image, mas_marker=(kind == "early" and not clone))
-    return WritePlan(ok=True, dests=(chosen,), image=prepared, variant=kind)
+    sh = bytes(shadow) if shadow else b""
+    if chosen.addr == SHADOW_DEST.addr and len(sh) != SHADOW_SIZE:
+        raise WriteBlocked(
+            "Shadow/NVPWD clone needs a 16 KiB shadow dump next to the image."
+        )
+    return WritePlan(
+        ok=True, dests=(chosen,), image=prepared, variant=kind, shadow=sh
+    )
 
 
 def after_erase_decision(
@@ -948,7 +989,12 @@ def execute_write(
             _log(note)
 
     plan = plan_write(
-        raw, dest=chosen, variant=variant, seed_len=seed_len, clone=clone
+        raw,
+        dest=chosen,
+        variant=variant,
+        seed_len=seed_len,
+        clone=clone,
+        shadow=bytes(_kwargs.get("shadow") or b""),
     )
     if len(plan.dests) != 1:
         raise WriteBlocked("One dest per kernel.")
@@ -1120,7 +1166,12 @@ def execute_write(
             why = "cancelled" if stop() else "neighbor $23 changed after erase"
             raise WriteBlocked(f"{dest.name} restored from preread ({why})")
 
-        payload = plan.image[dest.addr : dest.addr + dest.size]
+        if dest.addr == SHADOW_DEST.addr:
+            payload = plan.shadow
+            if len(payload) != dest.size:
+                raise WriteBlocked("Shadow/NVPWD payload missing.")
+        else:
+            payload = plan.image[dest.addr : dest.addr + dest.size]
         payload = splice_skip_tails(payload, dest, preread, _log)
         if dest.addr <= MAS_55AA_OFF < dest.addr + dest.size:
             buf = bytearray(payload)

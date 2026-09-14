@@ -26,6 +26,7 @@ from scantool_public.features.e92_write import (
     entire_dests,
     estimate_write_minutes,
     image_ecu_warnings,
+    find_clone_shadow,
     live_module_is_late,
     writable_dests,
     write_kernel_present,
@@ -307,14 +308,22 @@ class WritePage(QWidget):
         elif mode == "clone":
             ident0 = getattr(self._s, "_last_identity", {}) or {}
             late = live_module_is_late(ident0)
+            have_shadow = bool(self._path and find_clone_shadow(self._path))
             try:
-                dests = clone_dests(late=late)
+                dests = clone_dests(late=late, shadow=have_shadow)
             except WriteBlocked as exc:
                 QMessageBox.warning(self, "Clone to this ECU", str(exc))
                 return
             title = "Clone to this ECU"
             lo, hi = estimate_write_minutes(dests)
-            detail = clone_confirm_text(minutes=(lo, hi), late=late)
+            detail = clone_confirm_text(
+                minutes=(lo, hi), late=late, shadow=have_shadow
+            )
+            if late and not have_shadow:
+                detail += (
+                    "\n\nNo 16 KiB shadow dump next to this image — "
+                    "NVPWD on the spare will not be overwritten."
+                )
             try:
                 preview = describe_image(self._path.read_bytes())
             except Exception:

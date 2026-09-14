@@ -660,9 +660,13 @@ class Session(QObject):
 
                 self._emit_activity(f"Write {part}/{n}", active=True)
                 in_dest = True
-                from scantool_public.features.e92_write import live_module_is_late
+                from scantool_public.features.e92_write import (
+                    find_clone_shadow,
+                    live_module_is_late,
+                )
 
                 late = live_module_is_late(self._last_identity)
+                shadow = find_clone_shadow(Path(path)) if clone else None
                 out = request_write(
                     path=path,
                     dest=addr,
@@ -680,6 +684,7 @@ class Session(QObject):
                     clone=clone,
                     restamp=False,
                     late=late,
+                    shadow=shadow or b"",
                 )
                 in_dest = False
                 done += int(out.dests_done or 0)
