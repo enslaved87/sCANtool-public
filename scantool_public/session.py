@@ -124,13 +124,28 @@ class Session(QObject):
     def attempt_write(self) -> None:
         self._q.put(("write", None))
 
-    def start_write(self, path: Path, dest_addrs, allow_image_mismatch: bool = False) -> None:
+    def start_write(
+        self,
+        path: Path,
+        dest_addrs,
+        allow_image_mismatch: bool = False,
+        *,
+        clone: bool = False,
+        restamp: bool = False,
+    ) -> None:
         self._cancel_read.clear()
         self._reconnect_after_read = True
         if isinstance(dest_addrs, int):
             dest_addrs = (dest_addrs,)
         self._q.put(
-            ("write", path, tuple(int(a) for a in dest_addrs), bool(allow_image_mismatch))
+            (
+                "write",
+                path,
+                tuple(int(a) for a in dest_addrs),
+                bool(allow_image_mismatch),
+                bool(clone),
+                bool(restamp),
+            )
         )
 
     def cancel_write(self) -> None:
@@ -225,6 +240,8 @@ class Session(QObject):
                             item[1] if len(item) > 1 else None,
                             item[2] if len(item) > 2 else None,
                             allow_image_mismatch=bool(item[3]) if len(item) > 3 else False,
+                            clone=bool(item[4]) if len(item) > 4 else False,
+                            restamp=bool(item[5]) if len(item) > 5 else False,
                         )
                 finally:
                     if busy:
@@ -564,7 +581,14 @@ class Session(QObject):
         else:
             self._emit_activity(out.error or "Shadow read failed", pct=0, active=False)
 
-    def _do_write(self, path, dest_addrs=None, allow_image_mismatch: bool = False) -> None:
+    def _do_write(
+        self,
+        path,
+        dest_addrs=None,
+        allow_image_mismatch: bool = False,
+        clone: bool = False,
+        restamp: bool = False,
+    ) -> None:
         if path is None:
             request_write()
             return
@@ -589,6 +613,20 @@ class Session(QObject):
             )
             return
         br = int(self._last_bitrate or self._bitrate or 500_000)
+        if restamp:
+            from scantool_public.features.cal_cs import restamp_calibration_image
+
+            try:
+                raw = Path(path).read_bytes()
+                raw, notes = restamp_calibration_image(raw)
+                for note in notes:
+                    self.log_line.emit(note)
+                ensure_user_dirs()
+                staged = LOGS_DIR / "_write_restamp.bin"
+                staged.write_bytes(raw)
+                path = staged
+            except Exception as exc:
+                self.log_line.emit(f"cal CS restamp skipped: {exc}")
         self._close_transport()
         self.connected_changed.emit(False)
         self.log_line.emit("released OBD session for write")
@@ -634,8 +672,10 @@ class Session(QObject):
                     bus=bus,
                     reuse_kernel=resident,
                     reset=last,
-                    allow_image_mismatch=allow_image_mismatch,
+                    allow_image_mismatch=allow_image_mismatch or clone,
                     rollback=committed,
+                    clone=clone,
+                    restamp=False,
                 )
                 in_dest = False
                 done += int(out.dests_done or 0)
@@ -697,10 +737,21 @@ class Session(QObject):
                 self.connected_changed.emit(False)
                 self.log_line.emit(f"reconnect failed: {exc}")
         payload["reconnected"] = reconnected
+        if reconnected:
+            payload["after"] = dict(self._last_identity)
         self.write_done.emit(payload)
         if payload.get("ok"):
             extra = " · reconnected" if reconnected else ""
-            self._emit_activity(f"Write complete ({done} dests){extra}", pct=100, active=False)
+            after = payload.get("after") or {}
+            vin = after.get("vin") or ""
+            cals = after.get("cal_ids") or []
+            cal = cals[0] if cals else ""
+            ident_s = f"  VIN {vin}  CAL {cal}" if vin or cal else ""
+            self._emit_activity(
+                f"Write complete ({done} dests){extra}{ident_s}",
+                pct=100,
+                active=False,
+            )
         else:
             self._emit_activity(payload.get("error") or "Write failed", pct=0, active=False)
 

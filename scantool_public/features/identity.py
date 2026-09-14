@@ -11,6 +11,18 @@ def probe_identity(client: ObdClient) -> dict:
     name = client.read_ecu_name()
     voltage = client.read_pid(0x42)
     rpm = client.read_pid(0x0C)
+    cvn = ""
+    did_c0 = ""
+    did_c1 = ""
+    try:
+        cvn = client.read_cvn()
+    except Exception:
+        cvn = ""
+    try:
+        did_c0 = client.read_gm_did(0xC0)
+        did_c1 = client.read_gm_did(0xC1)
+    except Exception:
+        pass
     # Never digit-scrape CAL IDs into a fake OS number.
     return {
         "vin": vin,
@@ -20,6 +32,9 @@ def probe_identity(client: ObdClient) -> dict:
         "ecu_name": name,
         "voltage_v": voltage,
         "rpm": rpm,
+        "cvn": cvn,
+        "did_c0": did_c0,
+        "did_c1": did_c1,
         "present": bool(vin or cal_ids or name or voltage is not None),
         "note": (
             "Calibration IDs are Mode 09 ASCII — not a scraped OS number."

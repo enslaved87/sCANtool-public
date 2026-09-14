@@ -1,6 +1,6 @@
 """EARLY E92 flash write using this product's SCPB-W1 SRAM helper.
 
-One dest at a time on the live helper. Boot, VIN page, 0x1F000, and Camaro are refused.
+One dest at a time on the live helper. Boot, VIN page, and 0x1F000 are refused.
 HAS dests 0x100000–0x380000 are enabled (HAS_PUBLIC_GO).
 """
 
@@ -71,6 +71,10 @@ class Dest:
     dual_module: bool = False
 
 
+# VIN lives at 0x100B4 in the 0x10000 sector. Clone writes this page only;
+# it stops before 0x1F000 (mute/brick class). Boot 0x0 stays out.
+VIN_DEST = Dest(0x10000, 0xF000, "VIN 0x10000")
+
 PROVEN_DESTS: tuple[Dest, ...] = (
     Dest(0x40000, 0x20000, "LAS 0x40000"),
     Dest(0x60000, 0x20000, "LAS 0x60000"),
@@ -115,7 +119,7 @@ def dest_covers_flash(dests: tuple[Dest, ...] | list[Dest]) -> bool:
     return pos == FLASH_SIZE
 
 
-def dest_by_addr(addr: Dest | int) -> Dest:
+def dest_by_addr(addr: Dest | int, *, clone: bool = False) -> Dest:
     if isinstance(addr, Dest):
         addr = addr.addr
     if isinstance(addr, (tuple, list)):
@@ -124,6 +128,10 @@ def dest_by_addr(addr: Dest | int) -> Dest:
         want = int(addr)
     except (TypeError, ValueError) as exc:
         raise WriteBlocked("One dest per kernel.") from exc
+    if want == VIN_DEST.addr:
+        if not clone:
+            raise WriteBlocked("VIN page is clone-only.")
+        return VIN_DEST
     if want < 0x40000 or want == 0x1F000:
         raise WriteBlocked(f"Refused dest 0x{want:X}.")
     for dest in PROVEN_DESTS:
@@ -150,6 +158,40 @@ def entire_dests() -> tuple[Dest, ...]:
     if not dest_covers_flash(dests):
         raise WriteBlocked("Write entire dests do not tile 0x40000–4 MiB.")
     return dests
+
+
+def clone_dests() -> tuple[Dest, ...]:
+    """Write entire plus VIN page. Boot and 0x1F000 stay out."""
+    return tuple(entire_dests()) + (VIN_DEST,)
+
+
+def describe_image(image: bytes) -> dict:
+    """Preview for the Write tab. No bus."""
+    vin = image_vin(image)
+    holes = skip_tail_holes(image) if len(image) == FLASH_SIZE else ()
+    cal = ""
+    if len(image) >= 0x40018:
+        raw = bytes(image[0x40010:0x40018])
+        cal = "".join(chr(b) for b in raw if 0x30 <= b <= 0x39)
+    os_ascii = ""
+    if len(image) >= 0xC0118:
+        raw = bytes(image[0xC0110:0xC0118])
+        os_ascii = "".join(chr(b) for b in raw if 0x30 <= b <= 0x39)
+    lo_c, hi_c = estimate_write_minutes(calibration_dests())
+    try:
+        lo_e, hi_e = estimate_write_minutes(entire_dests())
+    except WriteBlocked:
+        lo_e, hi_e = 12, 16
+    return {
+        "vin": vin,
+        "cal_ascii": cal,
+        "os_ascii": os_ascii,
+        "skip_tails": len(holes),
+        "skip_tail_splice": bool(holes),
+        "cal_minutes": (lo_c, hi_c),
+        "entire_minutes": (lo_e, hi_e),
+        "size": len(image),
+    }
 
 
 def image_vin(image: bytes) -> str:
@@ -298,7 +340,7 @@ def splice_skip_tails(payload: bytes, dest: Dest, preread: bytes, log: LogFn) ->
     return bytes(buf)
 
 
-def prepare_image(raw: bytes) -> bytes:
+def prepare_image(raw: bytes, *, mas_marker: bool = True) -> bytes:
     if len(raw) != FLASH_SIZE:
         raise WriteBlocked("Image must be exactly 4 MiB.")
     holes = skip_tail_holes(raw)
@@ -309,7 +351,8 @@ def prepare_image(raw: bytes) -> bytes:
             f"({', '.join(hex(a) for a in class_holes)}). Use a complete 4 MiB dump."
         )
     out = bytearray(raw)
-    out[MAS_55AA_OFF : MAS_55AA_OFF + 2] = MAS_55AA
+    if mas_marker:
+        out[MAS_55AA_OFF : MAS_55AA_OFF + 2] = MAS_55AA
     return bytes(out)
 
 
@@ -329,12 +372,13 @@ def _is_late(variant: str, seed_len: int) -> bool:
     return (variant or "").strip().lower() == "late"
 
 
-def _is_camaro(variant: str, vin: str = "") -> bool:
+def _unsupported_write_target(variant: str, vin: str = "") -> bool:
+    """Refuse non-E92 passenger VIN families. Not a product name."""
     v = (variant or "").strip().lower()
     vin = (vin or "").strip().upper()
-    if v == "camaro":
+    if v == "unsupported":
         return True
-    return vin.startswith("1G1")
+    return len(vin) >= 3 and vin[:3] == "1G1"
 
 
 def plan_write(
@@ -343,11 +387,12 @@ def plan_write(
     dest: Dest | int | None = None,
     variant: str,
     seed_len: int = 0,
+    clone: bool = False,
 ) -> WritePlan:
     if dest is None:
         raise WriteBlocked("One dest per kernel.")
-    if _is_camaro(variant):
-        raise WriteBlocked("Camaro write is refused.")
+    if _unsupported_write_target(variant):
+        raise WriteBlocked("Write refused for this module.")
     if _is_late(variant, seed_len):
         if not LATE_WRITE_GO:
             raise WriteBlocked("LATE write is not enabled.")
@@ -358,8 +403,11 @@ def plan_write(
         kind = "early"
     else:
         raise WriteBlocked("Flash write is EARLY or LATE E92 only.")
-    chosen = dest_by_addr(dest)
-    prepared = prepare_image(image)
+    if isinstance(dest, Dest):
+        chosen = dest
+    else:
+        chosen = dest_by_addr(dest, clone=clone)
+    prepared = prepare_image(image, mas_marker=(kind == "early" and not clone))
     return WritePlan(ok=True, dests=(chosen,), image=prepared, variant=kind)
 
 
@@ -674,13 +722,15 @@ def execute_write(
         else:
             path = first
 
+    clone = bool(_kwargs.get("clone"))
+    restamp = bool(_kwargs.get("restamp"))
     if dest is None:
         raise WriteBlocked("One dest per kernel.")
     if reuse_kernel and not ALLOW_REUSE_KERNEL:
         raise WriteBlocked(
             "One dest per kernel. Dest 2+ reuse is not dump-matched."
         )
-    chosen = dest_by_addr(dest)
+    chosen = dest_by_addr(dest, clone=clone)
     if chosen.dual_module and not HAS_PUBLIC_GO:
         raise WriteBlocked(
             f"{chosen.name} refused: HAS_PUBLIC_GO is off. Dual-module HAS "
@@ -694,7 +744,16 @@ def execute_write(
     else:
         raw = image
 
-    plan = plan_write(raw, dest=chosen, variant=variant, seed_len=seed_len)
+    if restamp:
+        from scantool_public.features.cal_cs import restamp_calibration_image
+
+        raw, notes = restamp_calibration_image(raw)
+        for note in notes:
+            _log(note)
+
+    plan = plan_write(
+        raw, dest=chosen, variant=variant, seed_len=seed_len, clone=clone
+    )
     if len(plan.dests) != 1:
         raise WriteBlocked("One dest per kernel.")
     dest = plan.dests[0]
@@ -785,8 +844,8 @@ def execute_write(
             vin, osid = ext.probe_identity()
             _log(f"identity VIN={vin or '—'}  CAL={osid or '—'}")
             tick(f"Identity VIN={vin or '—'}  CAL={osid or '—'}", 1)
-            if _is_camaro(plan.variant, vin or ""):
-                raise WriteBlocked("Camaro write is refused.")
+            if _unsupported_write_target(plan.variant, vin or ""):
+                raise WriteBlocked("Write refused for this module.")
             warns = image_ecu_warnings(plan.image, vin or "", osid or "")
             for w in warns:
                 _log(f"image check: {w}")
@@ -795,8 +854,8 @@ def execute_write(
             tick(f"Uploading write kernel for {dest.name}", 3)
             if not ext.upload_kernel(require_early=False):
                 raise WriteBlocked("Write kernel did not start.")
-        if _is_camaro(plan.variant, getattr(ext, "_cached_vin", "") or ""):
-            raise WriteBlocked("Camaro write is refused.")
+        if _unsupported_write_target(plan.variant, getattr(ext, "_cached_vin", "") or ""):
+            raise WriteBlocked("Write refused for this module.")
         if stop():
             raise WriteBlocked("Write cancelled.")
 

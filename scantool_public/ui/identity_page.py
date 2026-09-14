@@ -54,9 +54,11 @@ class IdentityPage(QWidget):
         self.name = QLabel("—")
         self.volt = QLabel("—")
         self.rpm = QLabel("—")
+        self.cvn = QLabel("—")
         for label, w in (
             ("VIN", self.vin),
             ("Calibration IDs", self.cal),
+            ("CVN / $09 06", self.cvn),
             ("ECU name", self.name),
             ("Module voltage", self.volt),
             ("RPM", self.rpm),
@@ -92,6 +94,7 @@ class IdentityPage(QWidget):
             self.name.setText("—")
             self.volt.setText("—")
             self.rpm.setText("—")
+            self.cvn.setText("—")
             self.note.setText("")
         self._sync()
 
@@ -126,11 +129,13 @@ class IdentityPage(QWidget):
         self.volt.setText(f"{v:.2f} V" if isinstance(v, (int, float)) else "—")
         r = info.get("rpm")
         self.rpm.setText(f"{r:.0f}" if isinstance(r, (int, float)) else "—")
+        self.cvn.setText(info.get("cvn") or "—")
         self.note.setText(info.get("note") or "")
         lines = [
             f"VIN  {self.vin.text()}",
             f"CAL  {self.cal.text().replace(chr(10), ' · ')}",
             f"ECU  {self.name.text()}",
+            f"CVN  {self.cvn.text()}",
             f"V    {self.volt.text()}",
             f"RPM  {self.rpm.text()}",
         ]

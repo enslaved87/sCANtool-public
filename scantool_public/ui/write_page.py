@@ -19,6 +19,8 @@ from PySide6.QtWidgets import (
 from scantool_public.features.e92_write import (
     FLASH_SIZE,
     calibration_dests,
+    clone_dests,
+    describe_image,
     entire_dests,
     estimate_write_minutes,
     image_ecu_warnings,
@@ -56,12 +58,8 @@ class WritePage(QWidget):
         body.add_control(title_label("Write"))
         body.add_control(
             hint_label(
-                "EARLY or LATE E92 (not Camaro). Standard mode: "
-                "Write calibration (LAS + MAS) or Write entire (cal + OS + HAS). "
-                "Dests in this job share one write helper; stock OS returns "
-                "when the last dest finishes. "
-                "This reader's …F800 holes (0xFF fill) are replaced from live "
-                "flash on write so a self-read can go back. "
+                "EARLY or LATE E92. Open a 4 MiB backup, confirm, "
+                "then Write calibration, Write entire, or Clone to this ECU. "
                 "Do not key-off during a dest."
             )
         )
@@ -85,6 +83,10 @@ class WritePage(QWidget):
         self.file_lbl.setObjectName("muted")
         self.file_lbl.setWordWrap(True)
         body.add_control(self.file_lbl)
+        self.preview_lbl = QLabel("")
+        self.preview_lbl.setObjectName("muted")
+        self.preview_lbl.setWordWrap(True)
+        body.add_control(self.preview_lbl)
 
         self.advanced = QCheckBox("Advanced — write one dest")
         self.advanced.stateChanged.connect(self._sync)
@@ -104,15 +106,18 @@ class WritePage(QWidget):
         body.add_control(self.dest_wrap)
 
         pf, play = group("Confirm")
-        self.pf_early = QCheckBox("This ECM is EARLY or LATE E92 (not a Camaro)")
+        self.pf_early = QCheckBox("This ECM is EARLY or LATE E92")
         self.pf_tools = QCheckBox("Other scan tools unplugged, key ON, engine OFF")
         self.pf_brick = QCheckBox("I understand a failed write can brick the module")
+        self.pf_cs = QCheckBox("Fix calibration checksums (Write calibration)")
+        self.pf_cs.setChecked(True)
         self.pf_early.stateChanged.connect(self._sync)
         self.pf_tools.stateChanged.connect(self._sync)
         self.pf_brick.stateChanged.connect(self._sync)
         play.addWidget(self.pf_early)
         play.addWidget(self.pf_tools)
         play.addWidget(self.pf_brick)
+        play.addWidget(self.pf_cs)
         body.add_control(pf)
 
         brow = QHBoxLayout()
@@ -120,10 +125,15 @@ class WritePage(QWidget):
         self.btn_cal.clicked.connect(lambda: self._start("calibration"))
         self.btn_entire = compact_button("Write entire", primary=True)
         self.btn_entire.setToolTip(
-            "Writes 0x40000 through the end of flash (cal, OS MID, HAS). "
-            "Boot, VIN, and 0x1F000 stay on the ECU."
+            "Writes calibration, OS, and HAS. Boot, VIN, and 0x1F000 stay on the ECU."
         )
         self.btn_entire.clicked.connect(lambda: self._start("entire"))
+        self.btn_clone = compact_button("Clone to this ECU")
+        self.btn_clone.setToolTip(
+            "Spare/backup: writes the image including VIN onto this module. "
+            "Same EARLY/LATE family required. Immobilizer/BCM is not cloned."
+        )
+        self.btn_clone.clicked.connect(lambda: self._start("clone"))
         self.btn_write = compact_button("Write dest", primary=True)
         self.btn_write.clicked.connect(lambda: self._start("dest"))
         self.btn_cancel = compact_button("Cancel", danger=True)
@@ -136,6 +146,12 @@ class WritePage(QWidget):
         bwrap = QWidget()
         bwrap.setLayout(brow)
         body.add_control(bwrap)
+        crow = QHBoxLayout()
+        crow.addWidget(self.btn_clone)
+        crow.addStretch(1)
+        cwrap = QWidget()
+        cwrap.setLayout(crow)
+        body.add_control(cwrap)
 
         self.activity = ActivityBar()
         body.add_control(self.activity)
@@ -185,6 +201,7 @@ class WritePage(QWidget):
         self.btn_write.setVisible(adv)
         self.btn_cal.setVisible(not adv)
         self.btn_entire.setVisible(not adv)
+        self.btn_clone.setVisible(not adv)
         ready = (
             shipped
             and self._connected
@@ -196,15 +213,18 @@ class WritePage(QWidget):
         writing = self._writing()
         self.btn_cal.setEnabled(ready)
         self.btn_entire.setEnabled(ready)
+        self.btn_clone.setEnabled(ready)
         self.btn_write.setEnabled(ready)
         self.btn_cancel.setEnabled(writing)
         if writing:
             set_button_role(self.btn_cal, "active", text="Writing…")
             set_button_role(self.btn_entire, "active", text="Writing…")
+            set_button_role(self.btn_clone, "active", text="Writing…")
             set_button_role(self.btn_write, "active", text="Writing…")
         else:
             set_button_role(self.btn_cal, "primary", text="Write calibration")
             set_button_role(self.btn_entire, "primary", text="Write entire")
+            set_button_role(self.btn_clone, "", text="Clone to this ECU")
             set_button_role(self.btn_write, "primary", text="Write dest")
 
     def _browse(self) -> None:
@@ -225,6 +245,25 @@ class WritePage(QWidget):
         self.file_lbl.style().polish(self.file_lbl)
         if not ok:
             self._path = None
+            self.preview_lbl.setText("")
+        else:
+            try:
+                info = describe_image(p.read_bytes())
+            except Exception:
+                info = {}
+            bits = []
+            if info.get("vin"):
+                bits.append(f"VIN {info['vin']}")
+            if info.get("os_ascii"):
+                bits.append(f"OS {info['os_ascii']}")
+            if info.get("cal_ascii"):
+                bits.append(f"LAS {info['cal_ascii']}")
+            if info.get("skip_tail_splice"):
+                bits.append("R2 skip-tails will be filled from live flash")
+            lo, hi = info.get("cal_minutes") or (3, 5)
+            loe, hie = info.get("entire_minutes") or (12, 16)
+            bits.append(f"cal ~{lo}–{hi} min  ·  entire ~{loe}–{hie} min")
+            self.preview_lbl.setText("  ·  ".join(bits) if bits else "")
         self._sync()
 
     def _start(self, mode: str) -> None:
@@ -248,6 +287,22 @@ class WritePage(QWidget):
                 "A dest is committed after dump-match. If a later dest fails, "
                 "the tool tries to put already-written dests back. "
                 "Boot / VIN / 0x1F000 are not written."
+            )
+        elif mode == "clone":
+            try:
+                dests = clone_dests()
+            except WriteBlocked as exc:
+                QMessageBox.warning(self, "Clone to this ECU", str(exc))
+                return
+            title = "Clone to this ECU"
+            lo, hi = estimate_write_minutes(dests)
+            detail = (
+                "Writes this backup onto the connected module, including VIN.\n"
+                "Use this to make a spare of the same EARLY or LATE family.\n\n"
+                "Not cloned: boot, 0x1F000, and the vehicle immobilizer/BCM. "
+                "A cloned ECM may not start the truck until the BCM is paired.\n\n"
+                + "\n".join(f"  • {d.name}  {d.size // 1024} KiB" for d in dests)
+                + f"\n\nExpect about {lo}–{hi} minutes. Solid B+. Do not key-off."
             )
         elif mode == "entire":
             try:
@@ -299,8 +354,10 @@ class WritePage(QWidget):
         live_osid = cals[0] if cals else (ident.get("cal_id") or ident.get("os_id") or "")
         if " · " in str(live_osid):
             live_osid = str(live_osid).split(" · ")[0].strip()
+        clone = mode == "clone"
+        restamp = mode == "calibration" and self.pf_cs.isChecked()
         warns = image_ecu_warnings(raw, str(ident.get("vin") or ""), str(live_osid or ""))
-        if warns:
+        if warns and not clone:
             extra = (
                 "This image may not match the connected ECU:\n\n"
                 + "\n".join(f"  • {w}" for w in warns)
@@ -310,8 +367,16 @@ class WritePage(QWidget):
             if QMessageBox.question(self, title, extra) != QMessageBox.StandardButton.Yes:
                 return
             allow_mismatch = True
+        if clone:
+            allow_mismatch = True
         self.activity.set_activity(f"Starting {title.lower()}…", active=True)
-        self._s.start_write(self._path, [d.addr for d in dests], allow_image_mismatch=allow_mismatch)
+        self._s.start_write(
+            self._path,
+            [d.addr for d in dests],
+            allow_image_mismatch=allow_mismatch,
+            clone=clone,
+            restamp=restamp,
+        )
 
     def _fill(self, doc: dict) -> None:
         self.tree.clear()
@@ -342,9 +407,18 @@ class WritePage(QWidget):
 
     def _on_done(self, result: dict) -> None:
         if result.get("ok"):
-            msg = f"write complete  dests={result.get('dests_done')}"
+            after = result.get("after") or {}
+            vin = after.get("vin") or "—"
+            cals = after.get("cal_ids") or []
+            cal = " · ".join(cals[:3]) if cals else "—"
+            c0 = after.get("did_c0") or ""
+            c1 = after.get("did_c1") or ""
+            cvn = after.get("cvn") or ""
+            msg = f"Write complete  dests={result.get('dests_done')}  VIN {vin}  CAL {cal}"
             self.activity.set_activity(msg, pct=100, active=False)
             self._append(msg)
+            if c0 or c1 or cvn:
+                self._append(f"  $1A C0 {c0 or '—'}  C1 {c1 or '—'}  $09 06 {cvn or '—'}")
         else:
             err = result.get("error") or "write failed"
             self.activity.set_activity(err, pct=0, active=False)

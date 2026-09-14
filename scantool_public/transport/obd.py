@@ -501,6 +501,21 @@ class ObdClient:
         # Some controllers answer $1A $90; $22 F190 is often NRC 31.
         return self.read_gm_vin()
 
+    def read_cvn(self) -> str:
+        """Mode 09 PID 06 — stored CS/CVN words, not a planted CVN."""
+        raw = self.uds_request(bytes([0x09, 0x06]))
+        if not raw or raw[:1] == b"\x7f":
+            return ""
+        if len(raw) >= 2 and raw[0] == 0x49 and raw[1] == 0x06:
+            raw = raw[2:]
+        return raw.hex()
+
+    def read_gm_did(self, did: int) -> str:
+        raw = self.uds_request(bytes([0x1A, did & 0xFF]))
+        if not raw or raw[:1] == b"\x7f":
+            return ""
+        return raw.hex()
+
     def read_gm_vin(self) -> str:
         for payload in (bytes([0x1A, 0x90]), bytes([0x22, 0xF1, 0x90])):
             raw = self.uds_request(payload)

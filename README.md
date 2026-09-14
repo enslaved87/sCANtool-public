@@ -15,30 +15,32 @@ Vehicle scan, identity, datalog, E92 full-read, and EARLY E92 flash write.
   filled `0xFF` — a `$23` there machine-checks this SRAM reader.
   **Shadow password** reads 16 KiB of shadow flash and shows NVPWD
   (censorship password). Read-only; it does not program NVPWD.
-- **Write (EARLY or LATE E92)** — Standard mode is **Write calibration** (LAS
-  `0x40000` / `0x60000` + MAS) or **Write entire** (cal + OS + HAS).
-  Advanced mode writes one dest. Dests in one job share the write helper
-  and reset to stock when the last dest finishes. Boot, VIN, and
-  `0x1F000` are not written. Write entire is not atomic. If a later dest
+- **Write (EARLY or LATE E92)** — **Write calibration** (LAS
+  `0x40000` / `0x60000` + MAS), **Write entire** (cal + OS + HAS), or
+  **Clone to this ECU** (entire plus VIN page for a spare). Advanced
+  mode writes one dest. Dests in one job share the write helper
+  and reset to stock when the last dest finishes. Boot and
+  `0x1F000` are not written. Clone writes VIN from the image; other
+  modes leave VIN on the ECU. Write entire is not atomic. If a later dest
   fails and the helper is still alive, already-written dests are rolled
   back to the pre-write image. If the helper is silent, rollback cannot
   run — B+ off 8–10 s, then run **Write entire** again with the same
   image to heal mixed cal/OS/HAS. Image VIN (`0x100B4`) and live CAL
   are checked before dest 1.
-  Camaro write is refused. This reader's `…F800` holes (`0xFF` fill)
+  This reader's `…F800` holes (`0xFF` fill)
   are replaced from live flash on write so a self-read can go back.
 
 ## What it does not do
 
-Write is refused on Camaro, on serial OBD-only adapters, and on the
-demo adapter. Read and write kernels are never resident together.
+Write is refused on serial OBD-only adapters and on the demo adapter.
+Read and write kernels are never resident together.
 
 ## Run (end user)
 
 The Windows exe is **not** in this git tree. Download the zip from
 [Releases](https://github.com/enslaved87/sCANtool-public/releases)
 (`sCANtool-windows.zip`), unzip it, and double-click `sCANtool.exe`.
-Current release is **v1.0.5** (EARLY and LATE dest-gate; do not use v1.0.2).
+Current release is **v1.0.6** (clone spare ECU, cal CS restamp, write preview).
 `LICENSE` is in that folder.
 
 Kvaser / Peak / SLCAN adapters need their vendor driver installed on
@@ -124,10 +126,20 @@ compiler `.o` / `.elf` / `.map` files.
 End users download `sCANtool-windows.zip` from GitHub Releases, not
 from a clone. Attach that zip as a Release asset; do not commit it.
 
+## Notes (v1.0.6)
+
+- **Clone to this ECU** writes a 4 MiB backup onto a spare of the same
+  EARLY/LATE family, including VIN. Boot and `0x1F000` stay. Immobilizer/BCM
+  is not cloned — the spare may not start the vehicle until the BCM is paired.
+- Write tab shows image VIN/OS, skip-tail splice note, and time estimate.
+  Write calibration can restamp System/Fuel/Speedo/EngineDiag CS (not Engine).
+  After a successful write the tool reports live VIN / CAL / `$1A C0/C1` / `$09 06`.
+- Identity tab shows `$09 06` CVN/CS words (stored, not planted).
+
 ## Notes (v1.0.5)
 
 - EARLY and LATE dest-gate are both on (`EARLY_WRITE_GO` / `LATE_WRITE_GO`).
-  Camaro VIN (`1G1…`) stays refused. LATE cal identity **198 s**; LATE write
+  LATE cal identity **198 s**; LATE write
   entire all dests verified **16 min 27 s** (HAS live `$23` preread). EARLY
   cal **198 s**, write entire **15 min 9 s**.
 - SCPB-W1 is the same C90FL helper for both (3948 B). 5-byte algo 146 on LATE.

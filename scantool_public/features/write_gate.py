@@ -1,6 +1,6 @@
 """Write surface — EARLY and LATE E92 dest-gate.
 
-Public write uses this product's SRAM helper (SCPB-W1). Camaro, boot /
+Public write uses this product's SRAM helper (SCPB-W1). Boot /
 VIN page / 0x1F000, and any path that is not raw CAN stay refused.
 """
 
@@ -73,8 +73,7 @@ GATES: tuple[WriteGate, ...] = (
         "EARLY/LATE dest-gate",
         True,
         "LAS, MAS, OS MID, and HAS dests are enabled for EARLY and LATE E92. "
-        "Dest 2+ identity NOR 2026-09-13. Boot, VIN page, 0x1F000, and Camaro "
-        "stay refused.",
+        "Dest 2+ identity NOR 2026-09-13. Boot, VIN page, and 0x1F000 stay refused.",
     ),
 )
 
