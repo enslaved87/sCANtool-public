@@ -1,6 +1,6 @@
 # sCANtool Public
 
-Vehicle scan, identity, datalog, E92 full-read, and EARLY E92 flash write.
+Vehicle scan, identity, datalog, E92 full-read, and EARLY/LATE E92 flash write.
 
 ## What it does
 
@@ -17,14 +17,13 @@ Vehicle scan, identity, datalog, E92 full-read, and EARLY E92 flash write.
   (censorship password). Read-only; it does not program NVPWD.
 - **Write (EARLY or LATE E92)** — **Write calibration** (LAS
   `0x40000` / `0x60000` + MAS), **Write entire** (cal + OS + HAS), or
-  **Clone to this ECU**. Clone is **not** a full-chip copy: it writes
-  cal + OS + HAS + VIN from the image. It does **not** write boot
-  (`0x00000–0x0FFFF`), `0x1F000` (helper hangs), `0x20000–0x3FFFF`,
-  or the immobilizer/BCM. The spare must already be the same EARLY
-  or LATE family; it does not need the same OS ID or VIN. Advanced
-  mode writes one dest. Dests in one job share the write helper
-  and reset to stock when the last dest finishes. Other write modes
-  leave VIN on the ECU. Write entire is not atomic. If a later dest
+  **Clone to this ECU**. **LATE** clone writes the chip except 4 KiB
+  at `0x1F000` (left erased FF) and immobilizer/BCM; boot is last.
+  **EARLY** clone is still cal + OS + HAS + VIN page only. The spare
+  must already be the same family; it does not need the same OS ID
+  or VIN. Advanced mode writes one dest. Dests in one job share the
+  write helper and reset to stock when the last dest finishes. Other
+  write modes leave VIN on the ECU. Write entire is not atomic. If a later dest
   fails and the helper is still alive, already-written dests are rolled
   back to the pre-write image. If the helper is silent, rollback cannot
   run — B+ off 8–10 s, then run **Write entire** again with the same
@@ -43,7 +42,7 @@ Read and write kernels are never resident together.
 The Windows exe is **not** in this git tree. Download the zip from
 [Releases](https://github.com/enslaved87/sCANtool-public/releases)
 (`sCANtool-windows.zip`), unzip it, and double-click `sCANtool.exe`.
-Current release is **v1.0.7** (clone scope: not a full-chip copy).
+Current release is **v1.0.8** (LATE full-chip clone dests; skip `0x1F000`).
 `LICENSE` is in that folder.
 
 Kvaser / Peak / SLCAN adapters need their vendor driver installed on
@@ -70,7 +69,7 @@ Use **Demo (no adapter)** to click through the UI without hardware.
 Scan / identity / datalog work on USB-CAN and serial OBD adapters
 (python-can backends plus the common AT-command serial dongles).
 
-E92 full-read and EARLY write need **raw CAN + ISO-TP**. Serial OBD-only
+E92 full-read and EARLY/LATE write need **raw CAN + ISO-TP**. Serial OBD-only
 adapters cannot upload a kernel.
 
 Hit **Refresh** after plugging a dongle in. Serial ports show twice:
@@ -128,6 +127,13 @@ compiler `.o` / `.elf` / `.map` files.
 
 End users download `sCANtool-windows.zip` from GitHub Releases, not
 from a clone. Attach that zip as a Release asset; do not commit it.
+
+## Notes (v1.0.8)
+
+- **LATE Clone to this ECU** writes sector dests including boot (last),
+  VIN tiles, `0x1C000` 12 KiB, `0x20000`, `0x30000`, then cal/OS/HAS.
+  `0x1F000` is not programmed (left FF). Immobilizer/BCM is not cloned.
+  **EARLY** clone dests are unchanged until EARLY metal repeats those dests.
 
 ## Notes (v1.0.7)
 

@@ -660,6 +660,9 @@ class Session(QObject):
 
                 self._emit_activity(f"Write {part}/{n}", active=True)
                 in_dest = True
+                from scantool_public.features.e92_write import live_module_is_late
+
+                late = live_module_is_late(self._last_identity)
                 out = request_write(
                     path=path,
                     dest=addr,
@@ -676,12 +679,13 @@ class Session(QObject):
                     rollback=committed,
                     clone=clone,
                     restamp=False,
+                    late=late,
                 )
                 in_dest = False
                 done += int(out.dests_done or 0)
                 resident = not last
                 if out.preread:
-                    committed.append((addr, out.preread))
+                    committed.append((out.dest or addr, out.preread))
                 payload["path"] = out.path or payload["path"]
             payload["ok"] = True
             payload["dests_done"] = done

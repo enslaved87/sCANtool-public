@@ -4,5 +4,5 @@ Copyright (C) 2026 enslaved87
 SPDX-License-Identifier: GPL-3.0-or-later
 """
 
-__version__ = "1.0.7"
+__version__ = "1.0.8"
 PRODUCT_NAME = "sCANtool Public"

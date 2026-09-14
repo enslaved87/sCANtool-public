@@ -1,6 +1,6 @@
 # Write kernel SCPB-W1
 
-This product's C90FL SRAM helper. Uploaded only for EARLY dest-gate writes.
+This product's C90FL SRAM helper. Uploaded for EARLY and LATE dest-gate writes.
 
 Geometry from the public C90FL SSD (AN4521):
 
@@ -21,4 +21,4 @@ Host waits for the SCPB dest ack after each $6B/$6C. Transfer ACK is not program
 Clears EE at `_start` and pets Book-E TSR + DSPI_D companion watchdog
 from erase/program/CAN wait loops (same 6-word pair as KernelMPC5674F).
 The bootloader eMIOS11 ISR in flash is no longer required to keep the
-module alive. Dest-gate still refuses boot / VIN / `0x1F000`.
+module alive. Dest-gate still refuses `0x1F000`. LATE clone writes boot and VIN tiles. EARLY clone still omits boot.

@@ -73,8 +73,8 @@ GATES: tuple[WriteGate, ...] = (
         "EARLY/LATE dest-gate",
         True,
         "LAS, MAS, OS MID, and HAS dests are enabled for EARLY and LATE E92. "
-        "Dest 2+ identity NOR 2026-09-13. Boot and 0x1F000 stay refused. "
-        "VIN page is clone-only. Clone is not a full-chip copy.",
+        "LATE clone includes boot and low flash. 0x1F000 stays refused. "
+        "EARLY clone is still cal/OS/HAS/VIN. Immobilizer/BCM is not cloned.",
     ),
 )
 

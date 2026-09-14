@@ -1,6 +1,8 @@
-"""EARLY E92 flash write using this product's SCPB-W1 SRAM helper.
+"""EARLY/LATE E92 flash write using this product's SCPB-W1 SRAM helper.
 
-One dest at a time on the live helper. Boot, VIN page, and 0x1F000 are refused.
+One dest at a time on the live helper. Write entire is cal+OS+HAS.
+LATE clone is sector dests 0x0–end except 0x1F000 (left FF). EARLY clone
+is still entire plus VIN 0x10000/0xF000 until EARLY metal repeats those dests.
 HAS dests 0x100000–0x380000 are enabled (HAS_PUBLIC_GO).
 """
 
@@ -71,9 +73,23 @@ class Dest:
     dual_module: bool = False
 
 
-# VIN lives at 0x100B4 in the 0x10000 sector. Clone writes this page only;
-# it stops before 0x1F000 (mute/brick class). Boot 0x0 stays out.
+# EARLY clone only: VIN page as one dest (AND-only after first 16 KiB).
+# LATE clone uses 16 KiB VIN tiles in LATE_CLONE_LOW.
 VIN_DEST = Dest(0x10000, 0xF000, "VIN 0x10000")
+# LATE metal 2026-09-14. Boot last. 0x1C000 is 12 KiB — do not $6C 0x1F000.
+LATE_FULLCHIP_GO = True
+LATE_CLONE_LOW: tuple[Dest, ...] = (
+    Dest(0x1C000, 0x3000, "LAS 0x1C000"),
+    Dest(0x20000, 0x10000, "LAS 0x20000"),
+    Dest(0x30000, 0x10000, "LAS 0x30000"),
+    Dest(0x10000, 0x4000, "VIN 0x10000"),
+    Dest(0x14000, 0x4000, "VIN 0x14000"),
+    Dest(0x18000, 0x4000, "VIN 0x18000"),
+    Dest(0xC000, 0x4000, "Boot 0xC000"),
+    Dest(0x8000, 0x4000, "Boot 0x8000"),
+    Dest(0x4000, 0x4000, "Boot 0x4000"),
+    Dest(0x0, 0x4000, "Boot 0x0"),
+)
 
 PROVEN_DESTS: tuple[Dest, ...] = (
     Dest(0x40000, 0x20000, "LAS 0x40000"),
@@ -104,6 +120,7 @@ class WriteOutcome:
     dests_done: int = 0
     path: str = ""
     preread: bytes = b""
+    dest: Dest | None = None
 
 
 def write_kernel_present() -> bool:
@@ -119,19 +136,22 @@ def dest_covers_flash(dests: tuple[Dest, ...] | list[Dest]) -> bool:
     return pos == FLASH_SIZE
 
 
-def dest_by_addr(addr: Dest | int, *, clone: bool = False) -> Dest:
+def dest_by_addr(addr: Dest | int, *, clone: bool = False, late: bool = False) -> Dest:
     if isinstance(addr, Dest):
-        addr = addr.addr
+        return addr
     if isinstance(addr, (tuple, list)):
         raise WriteBlocked("One dest per kernel.")
     try:
         want = int(addr)
     except (TypeError, ValueError) as exc:
         raise WriteBlocked("One dest per kernel.") from exc
+    if clone:
+        for dest in clone_dests(late=late):
+            if dest.addr == want:
+                return dest
+        raise WriteBlocked(f"Refused dest 0x{want:X}.")
     if want == VIN_DEST.addr:
-        if not clone:
-            raise WriteBlocked("VIN page is clone-only.")
-        return VIN_DEST
+        raise WriteBlocked("VIN page is clone-only.")
     if want < 0x40000 or want == 0x1F000:
         raise WriteBlocked(f"Refused dest 0x{want:X}.")
     for dest in PROVEN_DESTS:
@@ -160,20 +180,65 @@ def entire_dests() -> tuple[Dest, ...]:
     return dests
 
 
-def clone_dests() -> tuple[Dest, ...]:
-    """Write entire plus VIN page. Boot, 0x1F000, and 0x20000–0x3FFFF stay out."""
-    return tuple(entire_dests()) + (VIN_DEST,)
+def live_module_is_late(ident: dict | None = None, *, vin: str = "") -> bool:
+    """True when the connected (or image) VIN is 2018+ — LATE dest list."""
+    vin = (vin or (ident or {}).get("vin") or "").strip().upper()
+    if len(vin) < 10:
+        return False
+    c = vin[9]
+    table = "ABCDEFGHJKLMNPRSTVWXY"
+    year = 0
+    if c.isdigit() and int(c) <= 9:
+        year = 2000 + int(c)
+    elif c.upper() in table:
+        year = 2010 + table.index(c.upper())
+    return year >= 2018
 
 
-def clone_scope() -> dict:
-    """What Clone to this ECU writes. Not a full-chip copy.
+def clone_dests(*, late: bool = False) -> tuple[Dest, ...]:
+    """LATE: sector dests including boot (skip 0x1F000). EARLY: entire + VIN 0xF000."""
+    base = tuple(entire_dests())
+    if late and LATE_FULLCHIP_GO:
+        return base + LATE_CLONE_LOW
+    return base + (VIN_DEST,)
 
-    SCPB-W1 has no proven boot dest. Metal $6C at 0x1F000 hangs (no dest
-    ACK). 0x20000 is refused with this helper. Immobilizer lives in BCM.
-    """
-    dests = clone_dests()
+
+def clone_scope(*, late: bool = False) -> dict:
+    dests = clone_dests(late=late)
+    if late and LATE_FULLCHIP_GO:
+        return {
+            "full_chip": False,
+            "late": True,
+            "dests": dests,
+            "writes": (
+                "Calibration, OS, and HAS (same as Write entire)",
+                "Low flash 0x1C000 (12 KiB), 0x20000, 0x30000",
+                "VIN tiles 0x10000 / 0x14000 / 0x18000 from the image",
+                "Boot tiles 0xC000 / 0x8000 / 0x4000 / 0x0 (last)",
+            ),
+            "does_not_write": (
+                "4 KiB at 0x1F000 — left erased FF (helper does not complete that dest)",
+                "Immobilizer / BCM — a different module on the vehicle",
+            ),
+            "need": (
+                "This dest list is LATE only. The spare must already be LATE E92.",
+                "The spare does not need the same OS ID or VIN — those come from the image.",
+                "After clone, pair the vehicle BCM or the engine may not start.",
+            ),
+            "impossible": (
+                "4 KiB at 0x1F000 cannot be programmed with this helper.",
+                "A different-family module cannot be turned into this one.",
+                "EARLY modules still use the smaller clone dest list.",
+            ),
+            "summary": (
+                "LATE clone writes the chip except 4 KiB at 0x1F000 (left FF) "
+                "and the immobilizer/BCM. Boot is last. The spare must already "
+                "be LATE E92. EARLY clone is still cal/OS/HAS/VIN only."
+            ),
+        }
     return {
         "full_chip": False,
+        "late": False,
         "dests": dests,
         "writes": (
             "Calibration (LAS 0x40000 / 0x60000 + MAS)",
@@ -182,9 +247,9 @@ def clone_scope() -> dict:
             "VIN page from the image (0x10000–0x1EFFF)",
         ),
         "does_not_write": (
-            "Boot block (0x00000–0x0FFFF) — no proven dest on this helper",
+            "Boot block (0x00000–0x0FFFF) — EARLY metal dests not proven yet",
             "4 KiB at 0x1F000 — this helper does not complete that dest",
-            "Low flash 0x20000–0x3FFFF — not a proven dest on this helper",
+            "Low flash 0x20000–0x3FFFF — EARLY metal dests not proven yet",
             "Immobilizer / BCM — a different module on the vehicle",
         ),
         "need": (
@@ -193,20 +258,20 @@ def clone_scope() -> dict:
             "After clone, pair the vehicle BCM or the engine may not start.",
         ),
         "impossible": (
-            "A full-chip copy is not possible with this write helper.",
+            "EARLY clone is not a full-chip copy until those dests are metal-proven.",
             "A different-family module cannot be turned into this one.",
         ),
         "summary": (
-            "Clone is not a full-chip copy. It writes calibration, OS, HAS, "
-            "and VIN from the image. It does not write boot, 0x1F000, "
-            "0x20000–0x3FFFF, or the immobilizer/BCM. The spare must already "
-            "be the same EARLY or LATE family."
+            "EARLY clone is not a full-chip copy. It writes calibration, OS, HAS, "
+            "and VIN from the image. LATE clone writes boot plus the rest of the "
+            "chip except 0x1F000 and immobilizer/BCM. The spare must already be "
+            "the same family."
         ),
     }
 
 
-def clone_confirm_text(*, minutes: tuple[int, int] | None = None) -> str:
-    scope = clone_scope()
+def clone_confirm_text(*, minutes: tuple[int, int] | None = None, late: bool = False) -> str:
+    scope = clone_scope(late=late)
     lines = [
         scope["summary"],
         "",
@@ -251,7 +316,9 @@ def describe_image(image: bytes) -> dict:
     except WriteBlocked:
         lo_e, hi_e = 12, 16
     try:
-        lo_k, hi_k = estimate_write_minutes(clone_dests())
+        lo_k, hi_k = estimate_write_minutes(
+            clone_dests(late=live_module_is_late(vin=vin or ""))
+        )
     except WriteBlocked:
         lo_k, hi_k = lo_e, hi_e + 1
     return {
@@ -351,8 +418,6 @@ def skip_tail_windows(lo: int = 0x10000, hi: int = FLASH_SIZE) -> tuple[int, ...
         return ()
     out: list[int] = []
     window = lo & ~0xFFFF
-    if window < 0x10000:
-        window = 0x10000
     while window < hi:
         tail = window + SKIP_TAIL_OFF
         if lo <= tail < hi:
@@ -480,7 +545,7 @@ def plan_write(
     if isinstance(dest, Dest):
         chosen = dest
     else:
-        chosen = dest_by_addr(dest, clone=clone)
+        chosen = dest_by_addr(dest, clone=clone, late=(kind == "late"))
     prepared = prepare_image(image, mas_marker=(kind == "early" and not clone))
     return WritePlan(ok=True, dests=(chosen,), image=prepared, variant=kind)
 
@@ -647,6 +712,62 @@ def erase_dest(bus, addr: int, log: LogFn, timeout_s: float = 60.0) -> None:
     _wait_ack(bus, addr, timeout_s, log)
 
 
+def _skip_ranges(lo: int, hi: int) -> tuple[tuple[int, int], ...]:
+    rows: list[tuple[int, int]] = []
+    for tail in skip_tail_windows(lo, hi):
+        rows.append((tail, SKIP_TAIL_SIZE))
+    for elo, en in ECC_HOLES:
+        if lo <= elo < hi:
+            rows.append((elo, en))
+    return tuple(sorted(rows))
+
+
+def _in_skip(addr: int, ranges: tuple[tuple[int, int], ...]) -> int:
+    """Return skip-to address if addr is inside a hole, else 0."""
+    for a, n in ranges:
+        if a <= addr < a + n:
+            return a + n
+    return 0
+
+
+def _read_mem_dest(ext, dest: Dest) -> bytes:
+    """Preread/verify dest. Skip …F800 tails and ECC holes (fill 0xFF)."""
+    lo, hi = dest.addr, dest.addr + dest.size
+    holes = _skip_ranges(lo, hi)
+    out = bytearray(b"\xff" * dest.size)
+    pos = lo
+    while pos < hi:
+        nxt = _in_skip(pos, holes)
+        if nxt:
+            pos = min(nxt, hi)
+            continue
+        take = min(READ_N, hi - pos)
+        for a, n in holes:
+            if pos < a < pos + take:
+                take = a - pos
+        if take <= 0:
+            break
+        chunk = _read_mem(ext, pos, take)
+        if len(chunk) != take:
+            return bytes(out[: pos - lo])
+        off = pos - lo
+        out[off : off + take] = chunk
+        pos += take
+    return bytes(out)
+
+
+def _payload_cmp(got: bytes, want: bytes, dest: Dest) -> bool:
+    if len(got) != len(want) or len(got) != dest.size:
+        return False
+    g = bytearray(got)
+    w = bytearray(want)
+    for a, n in _skip_ranges(dest.addr, dest.addr + dest.size):
+        off = a - dest.addr
+        g[off : off + n] = b"\x00" * n
+        w[off : off + n] = b"\x00" * n
+    return bytes(g) == bytes(w)
+
+
 def _read_mem(ext, addr: int, n: int) -> bytes:
     try:
         ext.uds.stack.reset()
@@ -798,13 +919,14 @@ def execute_write(
 
     clone = bool(_kwargs.get("clone"))
     restamp = bool(_kwargs.get("restamp"))
+    late_hint = bool(_kwargs.get("late"))
     if dest is None:
         raise WriteBlocked("One dest per kernel.")
     if reuse_kernel and not ALLOW_REUSE_KERNEL:
         raise WriteBlocked(
             "One dest per kernel. Dest 2+ reuse is not dump-matched."
         )
-    chosen = dest_by_addr(dest, clone=clone)
+    chosen = dest_by_addr(dest, clone=clone, late=late_hint)
     if chosen.dual_module and not HAS_PUBLIC_GO:
         raise WriteBlocked(
             f"{chosen.name} refused: HAS_PUBLIC_GO is off. Dual-module HAS "
@@ -942,7 +1064,7 @@ def execute_write(
 
         tick(f"Reading live {dest.name} before erase", 8)
         _log(f"preread {dest.name} @ 0x{dest.addr:X} ({dest.size // 1024} KiB)")
-        preread = _read_mem(ext, dest.addr, dest.size)
+        preread = _read_mem_dest(ext, dest)
         if len(preread) != dest.size:
             raise WriteBlocked(f"{dest.name} preread {len(preread)} B — abort without erase")
         if dest.addr <= MAS_55AA_OFF < dest.addr + dest.size:
@@ -1028,7 +1150,7 @@ def execute_write(
         # LAS 128 KiB: full dump-match (dest-2+ metal 2026-09-13). Larger
         # dests: 4 KiB head/tail + probes so write-entire stays < ~15 min.
         if dest.size <= 0x20000:
-            dump = _read_mem(ext, dest.addr, dest.size)
+            dump = _read_mem_dest(ext, dest)
             if len(dump) != dest.size:
                 allow_restore = False
                 _log(
@@ -1039,7 +1161,7 @@ def execute_write(
                 raise WriteBlocked(
                     f"{dest.name} post-read {len(dump)} B of {dest.size} — verify incomplete"
                 )
-            if dump != payload:
+            if not _payload_cmp(dump, payload, dest):
                 _log(
                     f"{dest.name} dump-match failed — erase then restore preread (AND-only NOR)"
                 )
@@ -1084,7 +1206,9 @@ def execute_write(
             note = str(path)
         elif WRITES_DIR:
             note = str(WRITES_DIR)
-        return WriteOutcome(ok=True, dests_done=done, path=note, preread=preread)
+        return WriteOutcome(
+            ok=True, dests_done=done, path=note, preread=preread, dest=dest
+        )
     except WriteBlocked as exc:
         restore_after_fault()
         n_ok, n_skip = rollback_committed_dests(bus, list(rollback or ()), ext, _log)

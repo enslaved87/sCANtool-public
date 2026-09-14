@@ -26,6 +26,7 @@ from scantool_public.features.e92_write import (
     entire_dests,
     estimate_write_minutes,
     image_ecu_warnings,
+    live_module_is_late,
     writable_dests,
     write_kernel_present,
 )
@@ -174,6 +175,8 @@ class WritePage(QWidget):
         session.connected_changed.connect(self._on_conn)
         session.busy_changed.connect(self._on_busy)
         session.activity.connect(self._on_activity)
+        if hasattr(session, "identity_ready"):
+            session.identity_ready.connect(lambda *_: self._sync())
         self._fill(write_status())
         self._sync()
 
@@ -204,6 +207,13 @@ class WritePage(QWidget):
         self.btn_entire.setVisible(not adv)
         self.btn_clone.setVisible(not adv)
         self.clone_scope_lbl.setVisible(not adv)
+        ident = getattr(self._s, "last_identity", None) or getattr(
+            self._s, "_last_identity", {}
+        ) or {}
+        late = live_module_is_late(ident)
+        scope = clone_scope(late=late)
+        self.clone_scope_lbl.setText(scope["summary"])
+        self.btn_clone.setToolTip(scope["summary"])
         ready = (
             shipped
             and self._connected
@@ -295,19 +305,20 @@ class WritePage(QWidget):
                 "Boot / VIN / 0x1F000 are not written."
             )
         elif mode == "clone":
+            ident0 = getattr(self._s, "_last_identity", {}) or {}
+            late = live_module_is_late(ident0)
             try:
-                dests = clone_dests()
+                dests = clone_dests(late=late)
             except WriteBlocked as exc:
                 QMessageBox.warning(self, "Clone to this ECU", str(exc))
                 return
             title = "Clone to this ECU"
             lo, hi = estimate_write_minutes(dests)
-            detail = clone_confirm_text(minutes=(lo, hi))
+            detail = clone_confirm_text(minutes=(lo, hi), late=late)
             try:
                 preview = describe_image(self._path.read_bytes())
             except Exception:
                 preview = {}
-            ident0 = getattr(self._s, "_last_identity", {}) or {}
             live_vin = ident0.get("vin") or "—"
             cals0 = ident0.get("cal_ids") or []
             live_cal = (
