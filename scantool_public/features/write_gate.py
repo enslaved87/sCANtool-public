@@ -1,7 +1,7 @@
-"""Write surface — EARLY E92 dest-gate only.
+"""Write surface — EARLY and LATE E92 dest-gate.
 
-Public write uses this product's SRAM helper (SCPB-W1). LATE modules,
-boot / VIN / 0x1F000, and any path that is not raw CAN stay refused.
+Public write uses this product's SRAM helper (SCPB-W1). Camaro, boot /
+VIN page / 0x1F000, and any path that is not raw CAN stay refused.
 """
 
 from __future__ import annotations
@@ -70,11 +70,11 @@ GATES: tuple[WriteGate, ...] = (
     ),
     WriteGate(
         "metal_signoff",
-        "EARLY dest-gate",
+        "EARLY/LATE dest-gate",
         True,
-        "LAS, MAS, OS MID, and HAS dests are enabled for EARLY modules. "
-        "Dest 2+ identity NOR 2026-09-13 (cal ~3 min, write-entire ~15 min). "
-        "Boot, VIN, 0x1F000, and LATE stay refused.",
+        "LAS, MAS, OS MID, and HAS dests are enabled for EARLY and LATE E92. "
+        "Dest 2+ identity NOR 2026-09-13. Boot, VIN page, 0x1F000, and Camaro "
+        "stay refused.",
     ),
 )
 
@@ -84,7 +84,7 @@ def write_status() -> dict:
         "shipped": WRITE_SHIPPED,
         "blocked": not WRITE_SHIPPED,
         "summary": (
-            "EARLY E92 flash write (SCPB-W1) on proven dests."
+            "EARLY/LATE E92 flash write (SCPB-W1) on proven dests."
             if WRITE_SHIPPED
             else "Flash write is reserved and disabled."
         ),

@@ -15,7 +15,7 @@ Vehicle scan, identity, datalog, E92 full-read, and EARLY E92 flash write.
   filled `0xFF` — a `$23` there machine-checks this SRAM reader.
   **Shadow password** reads 16 KiB of shadow flash and shows NVPWD
   (censorship password). Read-only; it does not program NVPWD.
-- **Write (EARLY only)** — Standard mode is **Write calibration** (LAS
+- **Write (EARLY or LATE E92)** — Standard mode is **Write calibration** (LAS
   `0x40000` / `0x60000` + MAS) or **Write entire** (cal + OS + HAS).
   Advanced mode writes one dest. Dests in one job share the write helper
   and reset to stock when the last dest finishes. Boot, VIN, and
@@ -25,12 +25,12 @@ Vehicle scan, identity, datalog, E92 full-read, and EARLY E92 flash write.
   run — B+ off 8–10 s, then run **Write entire** again with the same
   image to heal mixed cal/OS/HAS. Image VIN (`0x100B4`) and live CAL
   are checked before dest 1.
-  LATE modules are refused. This reader's `…F800` holes (`0xFF` fill)
+  Camaro write is refused. This reader's `…F800` holes (`0xFF` fill)
   are replaced from live flash on write so a self-read can go back.
 
 ## What it does not do
 
-Write is refused on LATE E92, on serial OBD-only adapters, and on the
+Write is refused on Camaro, on serial OBD-only adapters, and on the
 demo adapter. Read and write kernels are never resident together.
 
 ## Run (end user)
@@ -38,8 +38,7 @@ demo adapter. Read and write kernels are never resident together.
 The Windows exe is **not** in this git tree. Download the zip from
 [Releases](https://github.com/enslaved87/sCANtool-public/releases)
 (`sCANtool-windows.zip`), unzip it, and double-click `sCANtool.exe`.
-Current release is **v1.0.4** (faster EARLY write; algo-146 AES table
-generated from the blob. Do not use the v1.0.2 zip).
+Current release is **v1.0.5** (EARLY and LATE dest-gate; do not use v1.0.2).
 `LICENSE` is in that folder.
 
 Kvaser / Peak / SLCAN adapters need their vendor driver installed on
@@ -124,6 +123,14 @@ compiler `.o` / `.elf` / `.map` files.
 
 End users download `sCANtool-windows.zip` from GitHub Releases, not
 from a clone. Attach that zip as a Release asset; do not commit it.
+
+## Notes (v1.0.5)
+
+- EARLY and LATE dest-gate are both on (`EARLY_WRITE_GO` / `LATE_WRITE_GO`).
+  Camaro VIN (`1G1…`) stays refused. LATE cal identity **198 s**; LATE write
+  entire all dests verified **16 min 27 s** (HAS live `$23` preread). EARLY
+  cal **198 s**, write entire **15 min 9 s**.
+- SCPB-W1 is the same C90FL helper for both (3948 B). 5-byte algo 146 on LATE.
 
 ## Notes (v1.0.4)
 

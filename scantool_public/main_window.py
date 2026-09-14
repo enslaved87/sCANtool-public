@@ -198,7 +198,7 @@ class MainWindow(QMainWindow):
             "Adapters: Kvaser, PEAK, Vector, CANable (SLCAN/gs_usb), "
             "ELM327/OBDLink, SocketCAN, USB2CAN, IXXAT, J2534, neoVI, and more.\n"
             "ELM327 is scan/log only. E92 read/write needs raw CAN.\n\n"
-            "Write is EARLY only. LATE modules, boot, VIN, and 0x1F000 are refused.\n\n"
+            "Write is EARLY or LATE E92. Camaro, boot, VIN page, and 0x1F000 are refused.\n\n"
             f"Copyright (C) 2026 enslaved87\n"
             "This program is free software under the GNU GPL v3 or later. "
             "It comes with ABSOLUTELY NO WARRANTY. See LICENSE in the source "

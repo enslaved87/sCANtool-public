@@ -1,6 +1,6 @@
 """EARLY E92 flash write using this product's SCPB-W1 SRAM helper.
 
-One dest at a time on the live helper. LATE, boot, VIN, and 0x1F000 are refused.
+One dest at a time on the live helper. Boot, VIN page, 0x1F000, and Camaro are refused.
 HAS dests 0x100000–0x380000 are enabled (HAS_PUBLIC_GO).
 """
 
@@ -53,6 +53,8 @@ HUNG_KERNEL_MSG = (
 )
 # Dual-module HAS dests (0x100000–0x380000). Off refuses them.
 HAS_PUBLIC_GO = True
+EARLY_WRITE_GO = True
+LATE_WRITE_GO = True
 # Dest 2+ keeps the live W1 (Write entire / calibration). Kernel zeros
 # LMSR+HSR before each $6B/$6C so leftover select bits cannot over-erase
 # neighbors (HAS H0 2026-09-06). Reset to stock after the last dest.
@@ -319,6 +321,22 @@ def _is_early(variant: str, seed_len: int) -> bool:
     return (variant or "").strip().lower() == "early"
 
 
+def _is_late(variant: str, seed_len: int) -> bool:
+    if seed_len == 2:
+        return False
+    if seed_len >= 5:
+        return True
+    return (variant or "").strip().lower() == "late"
+
+
+def _is_camaro(variant: str, vin: str = "") -> bool:
+    v = (variant or "").strip().lower()
+    vin = (vin or "").strip().upper()
+    if v == "camaro":
+        return True
+    return vin.startswith("1G1")
+
+
 def plan_write(
     image: bytes,
     *,
@@ -328,11 +346,21 @@ def plan_write(
 ) -> WritePlan:
     if dest is None:
         raise WriteBlocked("One dest per kernel.")
-    if not _is_early(variant, seed_len):
-        raise WriteBlocked("Flash write is EARLY E92 only (2-byte security).")
+    if _is_camaro(variant):
+        raise WriteBlocked("Camaro write is refused.")
+    if _is_late(variant, seed_len):
+        if not LATE_WRITE_GO:
+            raise WriteBlocked("LATE write is not enabled.")
+        kind = "late"
+    elif _is_early(variant, seed_len):
+        if not EARLY_WRITE_GO:
+            raise WriteBlocked("EARLY write is not enabled.")
+        kind = "early"
+    else:
+        raise WriteBlocked("Flash write is EARLY or LATE E92 only.")
     chosen = dest_by_addr(dest)
     prepared = prepare_image(image)
-    return WritePlan(ok=True, dests=(chosen,), image=prepared, variant="early")
+    return WritePlan(ok=True, dests=(chosen,), image=prepared, variant=kind)
 
 
 def after_erase_decision(
@@ -730,7 +758,7 @@ def execute_write(
             bus,
             log=_log,
             detail_log=_log,
-            variant=E92Variant.EARLY,
+            variant=E92Variant.LATE if plan.variant == "late" else E92Variant.EARLY,
             stop_check=stop,
             kernel_path=WRITE_KERNEL,
         )
@@ -757,16 +785,18 @@ def execute_write(
             vin, osid = ext.probe_identity()
             _log(f"identity VIN={vin or '—'}  CAL={osid or '—'}")
             tick(f"Identity VIN={vin or '—'}  CAL={osid or '—'}", 1)
+            if _is_camaro(plan.variant, vin or ""):
+                raise WriteBlocked("Camaro write is refused.")
             warns = image_ecu_warnings(plan.image, vin or "", osid or "")
             for w in warns:
                 _log(f"image check: {w}")
             if warns and not allow_image_mismatch:
                 raise WriteBlocked("Image does not match this ECU. " + " ".join(warns))
             tick(f"Uploading write kernel for {dest.name}", 3)
-            if not ext.upload_kernel(require_early=True):
-                raise WriteBlocked("Write kernel did not start (EARLY 2-byte seed required).")
-        if ext.variant != E92Variant.EARLY:
-            raise WriteBlocked("Flash write is EARLY E92 only (2-byte security).")
+            if not ext.upload_kernel(require_early=False):
+                raise WriteBlocked("Write kernel did not start.")
+        if _is_camaro(plan.variant, getattr(ext, "_cached_vin", "") or ""):
+            raise WriteBlocked("Camaro write is refused.")
         if stop():
             raise WriteBlocked("Write cancelled.")
 

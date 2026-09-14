@@ -56,7 +56,7 @@ class WritePage(QWidget):
         body.add_control(title_label("Write"))
         body.add_control(
             hint_label(
-                "EARLY E92 only. Standard mode matches what tuners already know: "
+                "EARLY or LATE E92 (not Camaro). Standard mode: "
                 "Write calibration (LAS + MAS) or Write entire (cal + OS + HAS). "
                 "Dests in this job share one write helper; stock OS returns "
                 "when the last dest finishes. "
@@ -104,7 +104,7 @@ class WritePage(QWidget):
         body.add_control(self.dest_wrap)
 
         pf, play = group("Confirm")
-        self.pf_early = QCheckBox("This ECM is EARLY (2-byte seed)")
+        self.pf_early = QCheckBox("This ECM is EARLY or LATE E92 (not a Camaro)")
         self.pf_tools = QCheckBox("Other scan tools unplugged, key ON, engine OFF")
         self.pf_brick = QCheckBox("I understand a failed write can brick the module")
         self.pf_early.stateChanged.connect(self._sync)
