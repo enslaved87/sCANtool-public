@@ -45,7 +45,7 @@ Read and write kernels are never resident together.
 The Windows exe is **not** in this git tree. Download the zip from
 [Releases](https://github.com/enslaved87/sCANtool-public/releases)
 (`sCANtool-windows.zip`), unzip it, and double-click `sCANtool.exe`.
-Current release is **v1.0.11** (clone fills R2 skip-tails from live, then `{OSID}_SKIP_TAILS.bin`).
+Current release is **v1.0.12** (a full read keeps `…F800` tails; only the two 8-byte ECC holes stay `FF`).
 `LICENSE` is in that folder.
 
 Kvaser / Peak / SLCAN adapters need their vendor driver installed on
@@ -130,6 +130,13 @@ compiler `.o` / `.elf` / `.map` files.
 
 End users download `sCANtool-windows.zip` from GitHub Releases, not
 from a clone. Attach that zip as a Release asset; do not commit it.
+
+## Notes (v1.0.12)
+
+- Full read no longer stores `FF` over every `…F800` tail. The kernel is
+  asked for those bytes. The 8 bytes at `0x1FFF8` and `0x2FFF8` stay `FF`.
+  Proved on the late bench module. The early module was checked by running
+  its skip-tails image through the same reader.
 
 ## Notes (v1.0.11)
 

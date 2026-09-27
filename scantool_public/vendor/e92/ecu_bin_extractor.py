@@ -88,12 +88,38 @@ MIN_BATTERY_V = 12.0  # block unlock below this (key-on engine-off)
 WARN_BATTERY_V = 12.4
 BATTERY_CACHE_GRACE_S = 180.0  # bench: reuse recent good $42 if one poll misses
 
-# Last 2 KiB of each 64 KiB at addr >= 0x10000. Metal 2026-09-06: asking
-# the SRAM reader to $23 0x2F800 killed the kernel (PARTIAL_4pct stopped
-# at 0x2F800). Prefill 0xFF — those bytes exist on a complete dump; this
-# reader cannot fetch them. Keep True.
+# Metal 2026-09-27 (LATE 12698119): a $23 of 0x2F800 that stops before the
+# 8-byte hole at 0x2FFF8 does not kill the kernel. The 2026-09-06 crash was
+# that hole, not the whole …F800 tail. EARLY uses the same two holes.
+# SKIP_F800_TAILS remains for older callers; the read path ignores it.
 SKIP_BOUNDARY_MASK = 0xF800
-SKIP_F800_TAILS = True
+SKIP_F800_TAILS = False
+ECC_READ_HOLES = ((0x1FFF8, 8), (0x2FFF8, 8))
+
+
+def read_pieces(addr: int, length: int) -> list[tuple[str, int, int]]:
+    """Split a flash read around the two ECC holes.
+
+    Each piece is ("read", start, n) or ("ff", start, n). A block that
+    does not touch 0x1FFF8 or 0x2FFF8 is one read, including …F800 tails.
+    Same split for EARLY and LATE. The holes are silicon, not per-OS.
+    """
+    pieces: list[tuple[str, int, int]] = []
+    cursor = addr
+    end = addr + length
+    for lo, n in ECC_READ_HOLES:
+        hi = lo + n
+        if hi <= cursor or lo >= end:
+            continue
+        if cursor < lo:
+            pieces.append(("read", cursor, lo - cursor))
+        cut_lo = max(lo, cursor)
+        cut_hi = min(hi, end)
+        pieces.append(("ff", cut_lo, cut_hi - cut_lo))
+        cursor = cut_hi
+    if cursor < end:
+        pieces.append(("read", cursor, end - cursor))
+    return pieces
 
 
 class E92Variant(Enum):
@@ -1684,16 +1710,13 @@ class E92BinExtractor:
                 self._exit_programming_session()
 
     def _should_skip_boundary(self, addr: int) -> bool:
-        """Last 2 KiB of each 64 KiB window at addr >= 0x10000 (…F800–…FFFF).
-
-        Prefill 0xFF — this is a kernel crash guard, not erased firmware.
-        Shadow @ 0x00FFC000 is a different map and is not skipped here.
-        """
-        if not SKIP_F800_TAILS:
-            return False
+        """True only inside the two 8-byte ECC holes. …F800 tails are read."""
         if addr >= SHADOW_BASE:
             return False
-        return addr >= 0x10000 and (addr & 0xFFFF) == SKIP_BOUNDARY_MASK
+        for lo, n in ECC_READ_HOLES:
+            if lo <= addr < lo + n:
+                return True
+        return False
 
     def _read_flash_sim_direct(
         self,
@@ -1737,18 +1760,20 @@ class E92BinExtractor:
             if self._stop():
                 raise InterruptedError("Read cancelled")
             blk = min(READ_BLOCK, length - pos)
-            if self._should_skip_boundary(addr):
-                for i in range(blk):
-                    buf[pos + i] = 0xFF
-                    checksum = (checksum + 0xFF) & 0xFFFFFFFF
-                skipped += 1
-            else:
-                data = sim.flash[addr : addr + blk]
-                buf[pos : pos + blk] = data
-                for b in data:
-                    checksum = (checksum + b) & 0xFFFFFFFF
-            pos += blk
-            addr += blk
+            for kind, piece_addr, piece_len in read_pieces(addr, blk):
+                if kind == "ff":
+                    for _i in range(piece_len):
+                        buf[pos] = 0xFF
+                        checksum = (checksum + 0xFF) & 0xFFFFFFFF
+                        pos += 1
+                    skipped += 1
+                else:
+                    data = sim.flash[piece_addr : piece_addr + piece_len]
+                    buf[pos : pos + piece_len] = data
+                    for b in data:
+                        checksum = (checksum + b) & 0xFFFFFFFF
+                    pos += piece_len
+                addr = piece_addr + piece_len
             pct = 100 * pos // length if length else 0
             self.last_read_progress = ReadProgress(
                 bytes_read=pos,
@@ -1823,15 +1848,76 @@ class E92BinExtractor:
                     last_tp = time.time()
 
                 blk = min(READ_BLOCK, length - pos)
-
-                if self._should_skip_boundary(addr):
-                    for i in range(blk):
-                        buf[pos + i] = 0xFF
-                        checksum = (checksum + 0xFF) & 0xFFFFFFFF
-                    self.detail_log(f"  PREFILL 0x{addr:X} (flash boundary skip)")
-                    skipped += 1
-                    pos += blk
-                    addr += blk
+                pieces = read_pieces(addr, blk)
+                if len(pieces) != 1 or pieces[0][0] != "read":
+                    for kind, piece_addr, piece_len in pieces:
+                        if kind == "ff":
+                            for _i in range(piece_len):
+                                buf[pos] = 0xFF
+                                checksum = (checksum + 0xFF) & 0xFFFFFFFF
+                                pos += 1
+                            self.detail_log(
+                                f"  ECC 0x{piece_addr:X}+{piece_len} (8-byte hole, not a tail)"
+                            )
+                            skipped += 1
+                            addr += piece_len
+                            continue
+                        ok, data = False, b""
+                        nrc = b""
+                        for attempt in range(1, READ_BLOCK_RETRIES + 1):
+                            ok, data = self.uds.uds_read_memory_block(
+                                piece_addr, piece_len, timeout_s=READ_BLOCK_TIMEOUT_S
+                            )
+                            if ok:
+                                break
+                            if data and data[0] == 0x7F:
+                                nrc = data
+                                break
+                            self.detail_log(
+                                f"  retry {attempt}/{READ_BLOCK_RETRIES} @ 0x{piece_addr:X}"
+                            )
+                            self.uds.flush()
+                            self._pause(0.08)
+                        if ok and len(data) == piece_len:
+                            buf[pos : pos + piece_len] = data
+                            for b in data:
+                                checksum = (checksum + b) & 0xFFFFFFFF
+                        else:
+                            ret = nrc.hex() if nrc else "timeout"
+                            self.detail_log(
+                                f"  SKIP 0x{piece_addr:X} — filling 0xFF (ret={ret})"
+                            )
+                            for _i in range(piece_len):
+                                buf[pos + _i] = 0xFF
+                                checksum = (checksum + 0xFF) & 0xFFFFFFFF
+                            skipped += 1
+                            if skipped >= 64:
+                                raise RuntimeError(
+                                    "Too many skipped blocks — abort (power-cycle ECU and retry)"
+                                )
+                            if not self._reupload_kernel_after_crash():
+                                raise RuntimeError(
+                                    "Kernel re-upload failed — power-cycle ECU"
+                                )
+                        pos += piece_len
+                        addr += piece_len
+                    last_progress_at = time.time()
+                    pct = 100 * pos // length if length else 0
+                    self.last_read_progress = ReadProgress(
+                        bytes_read=pos,
+                        total_bytes=length,
+                        last_addr=addr,
+                        skipped_blocks=skipped,
+                        pct=pct,
+                        pass_number=self._read_pass_number,
+                        pass_total=self._read_pass_total,
+                        phase=self._read_phase,
+                    )
+                    if pos % progress_every == 0 or pct >= 100:
+                        self.log(
+                            f"  {pos:,} / {length:,} ({pct}%) "
+                            f"[pass {self._read_pass_number}/{self._read_pass_total}]"
+                        )
                     continue
 
                 ok, data = False, b""

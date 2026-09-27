@@ -47,8 +47,9 @@ SKIP_TAIL_CLASS = (0x11F800, 0x3FF800)
 # Last 2 KiB of 0x10000 window. $6C 0x1F000 hangs; leave FF.
 MUTE_SKIP_TAIL = 0x1F800
 # KernelMPC5674F: E92 byte-load machine-check windows. Not the 2 KiB …F800
-# crash-guard. R2 still skips whole tails until a one-dest self-read of
-# 0x2F800 (excluding these 8 B) is proven on metal.
+# crash-guard. Metal 2026-09-27 LATE read 0x2F800 excluding these 8 B.
+# EARLY uses the same holes; that donor was not read again. The full-read
+# path now requests every other …F800 tail.
 ECC_HOLES: tuple[tuple[int, int], ...] = ((0x0001FFF8, 8), (0x0002FFF8, 8))
 
 
@@ -860,7 +861,7 @@ def _in_skip(addr: int, ranges: tuple[tuple[int, int], ...]) -> int:
 
 
 def _read_mem_dest(ext, dest: Dest) -> bytes:
-    """Preread/verify dest. Skip …F800 tails and ECC holes (fill 0xFF)."""
+    """Preread/verify dest. Skip the 8-byte ECC holes (fill 0xFF). Read …F800 tails."""
     lo, hi = dest.addr, dest.addr + dest.size
     holes = _skip_ranges(lo, hi)
     out = bytearray(b"\xff" * dest.size)
