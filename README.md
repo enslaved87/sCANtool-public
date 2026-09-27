@@ -142,9 +142,9 @@ from a clone. Attach that zip as a Release asset; do not commit it.
 
 - Clone skip-tails: live NOR first; if still `FF`, fill from a same-OS
   `{OSID}_SKIP_TAILS.bin` next to the 4 MiB image (never a different OS).
-  Never programs `0x1F800`. LATE guinea-pig: 46 overlay tails grafted
-  dump-match; 2 already live (`0xBF800`, `0x11F800`). Stock `$1A 90`
-  VIN `1GNSCHKC5KR296631` after graft.
+  Never programs `0x1F800`. A late module: 46 overlay tails grafted
+  dump-match; 2 already live (`0xBF800`, `0x11F800`). Stock identity
+  read succeeded after the graft.
 
 ## Notes (v1.0.10)
 
