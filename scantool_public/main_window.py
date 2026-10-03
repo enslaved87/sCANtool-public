@@ -56,9 +56,11 @@ class MainWindow(QMainWindow):
         self.adapter.setMaximumWidth(360)
         brow.addWidget(self.adapter)
         self.bitrate = QComboBox()
-        self.bitrate.addItems(["500000", "250000", "33333"])
-        self.bitrate.setCurrentText("500000")
-        self.bitrate.setMaximumWidth(100)
+        self.bitrate.addItem("500 kbit/s", 500_000)
+        self.bitrate.addItem("250 kbit/s", 250_000)
+        self.bitrate.addItem("33.3 kbit/s", 33_333)
+        self.bitrate.setCurrentIndex(0)
+        self.bitrate.setMaximumWidth(120)
         brow.addWidget(self.bitrate)
         self.btn_refresh = compact_button("Refresh")
         self.btn_refresh.clicked.connect(self._refresh_adapters)
@@ -119,9 +121,10 @@ class MainWindow(QMainWindow):
                     break
         if 0 <= idx < self.adapter.count():
             self.adapter.setCurrentIndex(idx)
-        br = str(int(prefs.get("bitrate") or 500_000))
-        if self.bitrate.findText(br) >= 0:
-            self.bitrate.setCurrentText(br)
+        br = int(prefs.get("bitrate") or 500_000)
+        br_idx = self.bitrate.findData(br)
+        if br_idx >= 0:
+            self.bitrate.setCurrentIndex(br_idx)
 
     def _selected(self) -> dict:
         i = self.adapter.currentIndex()
@@ -131,9 +134,10 @@ class MainWindow(QMainWindow):
 
     def _connect(self) -> None:
         a = self._selected()
+        raw_rate = self.bitrate.currentData()
         try:
-            bitrate = int(self.bitrate.currentText())
-        except ValueError:
+            bitrate = int(raw_rate)
+        except (TypeError, ValueError):
             bitrate = 500_000
         save_prefs(
             {

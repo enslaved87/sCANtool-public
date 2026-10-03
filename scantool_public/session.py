@@ -224,7 +224,18 @@ class Session(QObject):
                     elif cmd == "snapshot":
                         self._do_snapshot(item[1])
                     elif cmd == "datalog_start":
-                        self._do_log_start(*item[1:])
+                        try:
+                            self._do_log_start(*item[1:])
+                        except Exception:
+                            self._logging = False
+                            if self._csv is not None:
+                                try:
+                                    self._csv.close()
+                                except Exception:
+                                    pass
+                                self._csv = None
+                            self.datalog_stopped.emit("")
+                            raise
                     elif cmd == "datalog_stop":
                         self._do_log_stop()
                     elif cmd == "mark":

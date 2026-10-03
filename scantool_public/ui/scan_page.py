@@ -45,8 +45,8 @@ class ScanPage(QWidget):
         body.add_control(title_label("Scan"))
         body.add_control(
             hint_label(
-                "J1979 scan of modules 0x7E8–0x7EF: stored, pending, and permanent "
-                "codes, MIL, I/M readiness, freeze frame."
+                "J1979 scan of every module that answers on 0x7E8–0x7EF: "
+                "stored, pending, and permanent codes, MIL, I/M readiness, freeze frame."
             )
         )
 

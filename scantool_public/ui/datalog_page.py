@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
 )
 
 from scantool_public.features.datalog import (
-    default_pids,
     pid_catalog,
     pid_meta,
     pids_for_preset,
@@ -164,7 +163,7 @@ class DatalogPage(QWidget):
             item = self.plist.item(i)
             if item.checkState() == Qt.CheckState.Checked:
                 out.append(str(item.data(32)))
-        return out or default_pids()
+        return out
 
     def _apply_preset(self, name: str) -> None:
         want = set(pids_for_preset(name))
@@ -178,6 +177,9 @@ class DatalogPage(QWidget):
     def _start(self) -> None:
         ensure_user_dirs()
         pids = self._checked()
+        if not pids:
+            self.path_lbl.setText("Check at least one PID, or pick a preset.")
+            return
         ts = time.strftime("%Y%m%d-%H%M%S")
         path = LOGS_DIR / f"datalog_{ts}.csv"
         hz = float(self.hz.value())
@@ -208,7 +210,12 @@ class DatalogPage(QWidget):
         for i in range(self.table.rowCount()):
             item = self.table.item(i, 0)
             pid = item.text() if item else ""
-            self.table.setItem(i, 1, QTableWidgetItem(texts.get(pid) or "—"))
+            text = texts.get(pid) or "—"
+            cell = self.table.item(i, 1)
+            if cell is None:
+                self.table.setItem(i, 1, QTableWidgetItem(text))
+            elif cell.text() != text:
+                cell.setText(text)
         ts = float(row.get("ts") or time.time())
         self.chart.add_row(ts, values)
 
@@ -217,3 +224,5 @@ class DatalogPage(QWidget):
         self._sync()
         if path:
             self.path_lbl.setText(f"Saved {path}")
+        else:
+            self.path_lbl.setText("Log did not start.")

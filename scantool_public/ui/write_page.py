@@ -65,7 +65,8 @@ class WritePage(QWidget):
             hint_label(
                 "EARLY or LATE E92. Open a 4 MiB backup, confirm, "
                 "then Write calibration, Write entire, or Clone to this ECU. "
-                "Clone is not a full-chip copy. Do not key-off during a dest."
+                "The line under the buttons says what this module's family writes. "
+                "Do not key-off during a dest."
             )
         )
 
