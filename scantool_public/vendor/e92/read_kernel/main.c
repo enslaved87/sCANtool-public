@@ -27,7 +27,7 @@
 #define CTS_SPINS 0x00200000u
 
 __attribute__((used, section(".rodata")))
-static const char k_id[] = "SCPB-R2";
+static const char k_id[] = "SCPB-R2e"; /* ECC-hole-only; not whole …F800 skip */
 
 static void spin(uint32_t n)
 {
@@ -192,16 +192,19 @@ static void pace(uint8_t stmin)
     }
 }
 
-/* Last 2 KiB of each 64 KiB window in the 4 MiB main image. Metal
- * 2026-09-06: $23 of 0x2F800 machine-checked this SRAM reader. Shadow
- * @ 0x00FFC000 (NVPWD @ 0x00FFFDD8) is a different array — do not skip
- * it or the shadow-password extract returns 0xFF. */
+/* Two 8-byte ECC holes only. Metal 2026-09-27 (LATE 12698119): a $23 of
+ * 0x2F800 that stops before 0x2FFF8 does not kill this SRAM reader. The
+ * 2026-09-06 crash was that hole, not the whole …F800 tail. Shadow
+ * @ 0x00FFC000 is a different array and is not a hole. */
 static int flash_hole(uint32_t addr)
 {
-    if (addr >= 0x00400000u) {
-        return 0;
+    if (addr >= 0x0001FFF8u && addr < 0x00020000u) {
+        return 1;
     }
-    return (addr >= 0x10000u) && ((addr & 0xFFFFu) >= 0xF800u);
+    if (addr >= 0x0002FFF8u && addr < 0x00030000u) {
+        return 1;
+    }
+    return 0;
 }
 
 static void copy_mem(uint8_t *dst, uint32_t addr, uint16_t len)

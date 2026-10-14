@@ -49,7 +49,7 @@ class E92Page(QWidget):
         )
 
         k = QLabel(
-            f"Read kernel: {'ready (SCPB-R2)' if kernel_present() else 'not built'} · {READ_KERNEL.name}"
+            f"Read kernel: {'ready (SCPB-R2e)' if kernel_present() else 'not built'} · {READ_KERNEL.name}"
         )
         k.setWordWrap(True)
         body.add_control(k)

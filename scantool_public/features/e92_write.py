@@ -42,7 +42,7 @@ BURST_GAP_S = 0.008
 BURST_EVERY = 64
 SKIP_TAIL_OFF = 0xF800
 SKIP_TAIL_SIZE = 0x800
-# This reader's class holes (subset of skip_tail_windows). R2 $23 fills them 0xFF.
+# Class holes used to refuse old skip-tail FULLREADs. SCPB-R2e reads them.
 SKIP_TAIL_CLASS = (0x11F800, 0x3FF800)
 # Last 2 KiB of 0x10000 window. $6C 0x1F000 hangs; leave FF.
 MUTE_SKIP_TAIL = 0x1F800
@@ -457,7 +457,7 @@ def neighbor_probes(dest: Dest) -> tuple[tuple[str, int, int], ...]:
 
 
 def skip_tail_windows(lo: int = 0x10000, hi: int = FLASH_SIZE) -> tuple[int, ...]:
-    """Last 2 KiB of each 64 KiB window. SCPB-R2 $23 fills these 0xFF."""
+    """Last 2 KiB of each 64 KiB window. Older SCPB-R2 $23 filled these 0xFF."""
     if hi <= lo:
         return ()
     out: list[int] = []

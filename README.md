@@ -10,9 +10,9 @@ Vehicle scan, identity, datalog, E92 full-read, and EARLY/LATE E92 flash write.
   ECU name, module voltage, RPM
 - **Datalog** — pick PIDs, set rate, record CSV, live chart, mark events
 - **E92 read** — early and late E92 full 4 MiB flash read using this
-  product's own SRAM read kernel (`SCPB-R2`); the OBD session reconnects
-  after the dump. The last 2 KiB of each 64 KiB window (`…F800`) is
-  filled `0xFF` — a `$23` there machine-checks this SRAM reader.
+  product's own SRAM read kernel (`SCPB-R2e`); the OBD session reconnects
+  after the dump. Tails (`…F800`) are read. Only the two 8-byte ECC holes
+  (`0x1FFF8`, `0x2FFF8`) stay `0xFF`.
   **Shadow password** reads 16 KiB of shadow flash and shows NVPWD
   (censorship password). Read-only; it does not program NVPWD.
 - **Write (EARLY or LATE E92)** — **Write calibration** (LAS
@@ -30,10 +30,9 @@ Vehicle scan, identity, datalog, E92 full-read, and EARLY/LATE E92 flash write.
   run — B+ off 8–10 s, then run **Write entire** again with the same
   image to heal mixed cal/OS/HAS. Image VIN (`0x100B4`) and live CAL
   are checked before dest 1.
-  This reader's `…F800` holes (`0xFF` fill)
-  are replaced from live flash on clone, then from a same-OS
-  `{OSID}_SKIP_TAILS.bin` beside the image if live is still `FF`.
-  `0x1F800` is never programmed.
+  Remaining `FF` tails on an older skip-tail dump are replaced from live
+  flash on clone, then from a same-OS `{OSID}_SKIP_TAILS.bin` beside the
+  image if live is still `FF`. `0x1F800` is never programmed.
 
 ## What it does not do
 
@@ -135,8 +134,10 @@ from a clone. Attach that zip as a Release asset; do not commit it.
 
 - Full read no longer stores `FF` over every `…F800` tail. The kernel is
   asked for those bytes. The 8 bytes at `0x1FFF8` and `0x2FFF8` stay `FF`.
-  Proved on the late bench module. The early module was checked by running
-  its skip-tails image through the same reader.
+  Proved on the late bench module, then in-car on a late E92 (2026-10-14):
+  52 of 64 tails had data, 12 tails were erased `FF` on the chip,
+  `skipped_blocks=2`. The early module was checked by running its
+  skip-tails image through the same reader.
 
 ## Notes (v1.0.11)
 
