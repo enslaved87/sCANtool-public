@@ -91,10 +91,44 @@ BATTERY_CACHE_GRACE_S = 180.0  # bench: reuse recent good $42 if one poll misses
 # Metal 2026-09-27 (LATE 12698119): a $23 of 0x2F800 that stops before the
 # 8-byte hole at 0x2FFF8 does not kill the kernel. The 2026-09-06 crash was
 # that hole, not the whole …F800 tail. EARLY uses the same two holes.
+# 2026-10-15 stock $23 of 0x1FFF0, 0x1FFF8, 0x20000, 0x2FFF0, 0x2FFF8 and
+# 0x30000 on that donor all returned 7F 23 31. Stock cannot correct the
+# kernel's FF stand-in, and the kernel must not dereference the holes.
 # SKIP_F800_TAILS remains for older callers; the read path ignores it.
 SKIP_BOUNDARY_MASK = 0xF800
 SKIP_F800_TAILS = False
 ECC_READ_HOLES = ((0x1FFF8, 8), (0x2FFF8, 8))
+# Erased …F800 pages on the 2026-10-14 Camaro no-skip read. A genuine
+# read's all-FF tails are this set. Sixty-three FF tails means the old
+# skip-tail prefill is still on.
+KNOWN_ERASED_TAIL_PAGES = frozenset({
+    0x3F800, 0xCF800, 0xDF800, 0xEF800, 0xFF800,
+    0x38F800, 0x39F800, 0x3AF800, 0x3BF800, 0x3CF800, 0x3DF800, 0x3EF800,
+})
+
+
+def tail_pages(blob: bytes) -> tuple[list[int], list[int]]:
+    """Return (all-FF page starts, pages that contain data)."""
+    erased: list[int] = []
+    data: list[int] = []
+    for sec in range(0, 0x40):
+        addr = sec * 0x10000 + 0xF800
+        if addr + 0x800 > len(blob):
+            continue
+        chunk = blob[addr:addr + 0x800]
+        if chunk == b"\xff" * 0x800:
+            erased.append(addr)
+        else:
+            data.append(addr)
+    return erased, data
+
+
+def genuine_tail_set(erased_pages: list[int] | set[int]) -> bool:
+    """True when every all-FF tail is a known erased page.
+
+    Twelve known holes pass. A skip-tailed read has many more and fails.
+    """
+    return set(erased_pages) <= KNOWN_ERASED_TAIL_PAGES and len(erased_pages) > 0
 
 
 def read_pieces(addr: int, length: int) -> list[tuple[str, int, int]]:
